@@ -7,6 +7,82 @@ i `db` (PostgreSQL 16), a ispred njih je Nginx s HTTPS-om. Snimci su na Bunny St
 > Kad ga prođeš, ispravi ga tamo gdje se stvarnost razlikuje, da sljedeći put bude tačno.
 > Komande za instalaciju Dockera i certbota provjeri na njihovim zvaničnim stranicama prije pokretanja.
 
+## 0. Proba na Terminkovom serveru (komodo.terminkoapp.ba)
+
+Do kupovine Komodovog servera i domene, Komodo za probu radi na Terminkovom serveru (`188.245.3.174`),
+na adresi `https://komodo.terminkoapp.ba`. Terminko se ne dira: Komodo ima svoj folder (`~/komodo`), svoje
+kontejnere, bazu i port (3002; Terminko je 3000, demo 3001), a memorija je ograničena na 256 MB po kontejneru.
+
+**0.1 DNS (UTIC, domena terminkoapp.ba):** novi A zapis `komodo` → `188.245.3.174`.
+
+**0.2 Ključ za GitHub (na serveru, jednom):**
+
+```bash
+ssh stefan@188.245.3.174
+ssh-keygen -t ed25519 -f ~/.ssh/komodo_deploy -N ""
+cat ~/.ssh/komodo_deploy.pub
+```
+
+Ispisani ključ: GitHub → `stefansavic7/komodo` → Settings → Deploy keys → Add (bez dozvole za pisanje). Zatim:
+
+```bash
+printf 'Host github-komodo\n  HostName github.com\n  IdentityFile ~/.ssh/komodo_deploy\n' >> ~/.ssh/config
+git clone git@github-komodo:stefansavic7/komodo.git ~/komodo
+```
+
+Poseban `Host github-komodo` je zato što Terminko već koristi svoj ključ za `github.com`.
+
+**0.3 Tajne:**
+
+```bash
+cd ~/komodo
+cp server/env.server.primjer .env
+cp server/env.api.primjer api/.env
+nano .env
+nano api/.env
+chmod 600 .env api/.env
+```
+
+U `.env`: `POSTGRES_PASSWORD` i odkomentarisani redovi za Terminkov server (`API_MEM`, `DB_MEM`,
+`DB_SHARED_BUFFERS`, `DB_MAX_CONNECTIONS`, `NODE_OPTIONS`).
+U `api/.env`: `APP_URL=https://komodo.terminkoapp.ba`, `ADMIN_EMAILS`, `BUNNY_*` kao na laptopu.
+`SMTP_URL` za probu može ostati prazan: emailovi se tada ispisuju u logu (`docker compose logs api`),
+a novi nalozi su odmah potvrđeni.
+
+**0.4 Pokretanje:**
+
+```bash
+cd ~/komodo
+docker compose up -d --build
+docker compose ps
+docker compose logs api --tail 30
+curl -s http://127.0.0.1:3002/api/health
+free -h
+```
+
+Health mora vratiti `{"status":"ok"}`. Provjeri i Terminko: `cd ~/terminko && docker compose ps` — oba kontejnera
+moraju biti `Up`, a `curl -s http://127.0.0.1:3000/api/health` mora i dalje vraćati `"status":"ok"`.
+
+**0.5 Nginx i HTTPS:**
+
+```bash
+sudo cp ~/komodo/server/nginx-komodo.conf /etc/nginx/sites-available/komodo
+sudo sed -i 's/DOMENA/komodo.terminkoapp.ba/' /etc/nginx/sites-available/komodo
+sudo ln -s /etc/nginx/sites-available/komodo /etc/nginx/sites-enabled/komodo
+sudo nginx -t && sudo systemctl reload nginx
+nslookup komodo.terminkoapp.ba
+sudo certbot --nginx -d komodo.terminkoapp.ba --redirect
+```
+
+`nslookup` mora pokazati `188.245.3.174` prije certbota. Provjera: `https://komodo.terminkoapp.ba` otvara
+aplikaciju, `https://terminkoapp.ba` i dalje radi.
+
+**0.6 Nova verzija** (isto kao odjeljak 4): `cd ~/komodo && git pull && docker compose up -d --build`.
+
+**0.7 Kad Komodo dobije svoj server:** kopija baze (`server/kopija-baze.sh`), postavljanje po odjeljku 2,
+vraćanje kopije (odjeljak 6), pa na Terminkovom serveru `cd ~/komodo && docker compose down` (bez `-v` dok
+nova baza nije provjerena), brisanje Nginx sajta `komodo` i DNS zapisa.
+
 ## 1. Gdje je šta
 
 | Šta | Gdje |
@@ -116,6 +192,7 @@ Zadnja komanda treba vratiti `{"status":"ok"}`. U logu treba pisati „Snimci id
 sudo apt install -y nginx
 sudo ufw allow 'Nginx Full'
 sudo cp ~/komodo/server/nginx-komodo.conf /etc/nginx/sites-available/komodo
+sudo sed -i 's/DOMENA/komodo.ba www.komodo.ba/' /etc/nginx/sites-available/komodo
 sudo ln -s /etc/nginx/sites-available/komodo /etc/nginx/sites-enabled/komodo
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx

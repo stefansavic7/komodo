@@ -3,6 +3,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Mala potrošnja memorije, da Komodo može raditi i na Terminkovom serveru (vidi docs/SERVER.md, odjeljak 0).
+    command: ["postgres", "-c", "shared_buffers=${DB_SHARED_BUFFERS:-128MB}", "-c", "max_connections=${DB_MAX_CONNECTIONS:-50}"]
     environment:
       POSTGRES_USER: komodo
       POSTGRES_DB: komodo
@@ -14,7 +16,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    mem_limit: 512m
+    mem_limit: ${DB_MEM:-512m}
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }   # dnevnici se brišu sami (vidi politiku privatnosti)
@@ -29,6 +31,7 @@ services:
       PORT: 3002
       UPLOADS_DIR: /data/uploads
       DATABASE_URL: postgres://komodo:${POSTGRES_PASSWORD}@db:5432/komodo
+      NODE_OPTIONS: ${NODE_OPTIONS:-}
     volumes:
       - uploads:/data/uploads
     ports:
@@ -36,7 +39,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    mem_limit: 512m
+    mem_limit: ${API_MEM:-512m}
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }   # dnevnici se brišu sami (vidi politiku privatnosti)
