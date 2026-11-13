@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Komodo",
+    "slug": "komodo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/ikona.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#16121a",
+    "scheme": "komodo",
+    "splash": {
+      "image": "./assets/ikona.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#16121a"
+    },
+    "ios": {
+      "bundleIdentifier": "ba.komodo.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Kamera ti treba da snimiš video proizvoda za oglas.",
+        "NSMicrophoneUsageDescription": "Mikrofon snima zvuk uz video proizvoda.",
+        "NSPhotoLibraryUsageDescription": "Galerija ti treba da izabereš video proizvoda za oglas.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "ba.komodo.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/ikona.png",
+        "backgroundColor": "#16121a"
+      },
+      "permissions": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"]
+    },
+    "plugins": [
+      ["expo-notifications", { "color": "#ff6a4d" }]
+    ],
+    "extra": {}
+  }
+}

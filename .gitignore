@@ -1,0 +1,10 @@
+node_modules/
+.env
+api/.env
+mobile/.env
+api/uploads/
+.expo/
+dist/
+*.log
+*.zip
+google-services.json
