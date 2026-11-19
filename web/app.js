@@ -15,6 +15,14 @@ var chatId = null, chatLast = 0, chatTimer = null, unreadTimer = null;
 var profileTimer = null, gridSig = null, feedTimer = null;
 var search = { q: '', min: '', max: '' };   // pretraga u feedu
 var viewed = {};                             // oglasi čiji je pregled već prijavljen u ovoj posjeti
+var viewQueue = [], viewsSending = false;    // pregledi koji čekaju slanje na /api/views
+var viewsBatch = null;                       // null: ne znamo; false: server nema /api/views (stari API)
+var MAX_VIEW_QUEUE = 500, VIEWS_PER_REQUEST = 50;
+var currentId = null;                        // oglas koji je trenutno na ekranu u feedu
+var likeBusy = {};                           // oglasi čije je sviđanje upravo u slanju
+var pItems = [], pPages = 0, pMoreOn = false, pBusy = false;   // mreža na vlastitom profilu
+var vItems = [], vShop = null, vMoreOn = false, vBusy = false;  // mreža na javnom profilu butika
+function pageVisible() { return document.visibilityState === 'visible'; }
 var editId = null, reportTarget = null, chatBlocked = false, authView = 'auth', resetToken = null;
 var inApp = !!window.ReactNativeWebView;     // radi li unutar mobilne aplikacije (Expo)
 var pushToken = null;
@@ -132,7 +140,8 @@ function watch() {
           if (p && p.catch) { p.catch(function () { v.muted = true; var r = v.play(); if (r && r.catch) { r.catch(function () {}); } }); }
         }
         var vid = en.target.getAttribute('data-id');
-        if (vid && !viewed[vid]) { viewed[vid] = true; api('POST', '/api/listings/' + vid + '/view').catch(function () {}); }
+        if (vid) { currentId = vid; }
+        if (vid && !viewed[vid]) { viewed[vid] = true; queueView(vid); }
         // pred krajem liste učitaj sljedeću stranu
         var cards = feed.querySelectorAll('.card');
         if (en.target === cards[cards.length - 1] || en.target === cards[cards.length - 2]) { loadFeed(false); }
@@ -178,23 +187,87 @@ function loadFeed(reset, firstId) {
     } else { toast(err.message); }
   });
 }
-// Dok je feed otvoren, brojevi sviđanja na učitanim oglasima se osvježavaju sami.
+function paintLike(item) {
+  var btn = feed.querySelector('.card[data-id="' + item.id + '"] [data-act="like"]');
+  if (!btn) { return; }
+  btn.classList.toggle('on', !!item.liked);
+  btn.setAttribute('aria-pressed', item.liked ? 'true' : 'false');
+  btn.querySelector('.n').textContent = item.likes;
+}
+// Dok je feed otvoren i stranica vidljiva, broj sviđanja oglasa na ekranu se osvježava sam.
 function refreshLikes() {
-  if (feed.hidden || document.hidden || !items.length) { return; }
-  var ids = items.slice(-100).map(function (i) { return i.id; });
-  api('GET', '/api/likes?ids=' + ids.join(',')).then(function (d) {
-    Object.keys(d.svidjanja).forEach(function (id) {
-      var item = byId(id), v = d.svidjanja[id];
-      if (!item || (item.likes === v.likes && item.liked === v.liked)) { return; }
-      item.likes = v.likes; item.liked = v.liked;
-      var btn = feed.querySelector('.card[data-id="' + id + '"] [data-act="like"]');
-      if (!btn) { return; }
-      btn.classList.toggle('on', v.liked);
-      btn.setAttribute('aria-pressed', v.liked ? 'true' : 'false');
-      btn.querySelector('.n').textContent = v.likes;
-    });
+  if (feed.hidden || !pageVisible() || !currentId || !byId(currentId) || likeBusy[currentId]) { return; }
+  var id = currentId;
+  api('GET', '/api/likes?ids=' + encodeURIComponent(id)).then(function (d) {
+    var item = byId(id), v = d.svidjanja && d.svidjanja[id];
+    if (!item || !v || likeBusy[id] || (item.likes === v.likes && item.liked === v.liked)) { return; }
+    item.likes = v.likes; item.liked = v.liked;
+    paintLike(item);
   }, function () {});
 }
+
+/* ---------- pregledi: skupljaju se i šalju zajedno ---------- */
+
+function queueView(id) {
+  viewQueue.push(Number(id));
+  if (viewQueue.length > MAX_VIEW_QUEUE) { viewQueue = viewQueue.slice(-MAX_VIEW_QUEUE); }
+}
+function requeueViews(ids) {
+  viewQueue = ids.concat(viewQueue);
+  if (viewQueue.length > MAX_VIEW_QUEUE) { viewQueue = viewQueue.slice(-MAX_VIEW_QUEUE); }
+}
+// Stari API (bez /api/views): svaki pregled ide posebno, kao ranije.
+function sendViewsOneByOne(ids, keepalive) {
+  ids.forEach(function (id) {
+    try {
+      fetch('/api/listings/' + id + '/view', { method: 'POST', credentials: 'same-origin', keepalive: !!keepalive }).catch(function () {});
+    } catch (e) {}
+  });
+}
+// Pri sakrivanju stranice: sendBeacon ako postoji, inače fetch s keepalive.
+function flushViewsOnHide() {
+  if (!viewQueue.length) { return; }
+  var ids = viewQueue; viewQueue = [];
+  if (viewsBatch === false) { sendViewsOneByOne(ids, true); return; }
+  var failed = [];
+  for (var k = 0; k < ids.length; k += VIEWS_PER_REQUEST) {
+    var chunk = ids.slice(k, k + VIEWS_PER_REQUEST), body = JSON.stringify({ ids: chunk }), ok = false;
+    try {
+      if (navigator.sendBeacon) {
+        ok = navigator.sendBeacon('/api/views', new Blob([body], { type: 'application/json' }));
+      } else {
+        fetch('/api/views', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: body }).catch(function () {});
+        ok = true;
+      }
+    } catch (e) { ok = false; }
+    if (!ok) { failed = failed.concat(chunk); }
+  }
+  if (failed.length) { requeueViews(failed); }
+}
+// Redovno slanje (svakih 30 s): jedan zahtjev po najviše 50 oglasa.
+function flushViews() {
+  if (viewsSending || !viewQueue.length) { return; }
+  var ids = viewQueue.slice(0, VIEWS_PER_REQUEST);
+  viewQueue = viewQueue.slice(ids.length);
+  if (viewsBatch === false) { sendViewsOneByOne(ids, false); flushViews(); return; }
+  viewsSending = true;
+  fetch('/api/views', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids })
+  }).then(function (res) {
+    viewsSending = false;
+    if (res.status === 404 || res.status === 405) { viewsBatch = false; sendViewsOneByOne(ids, false); flushViews(); return; }
+    if (res.ok) { viewsBatch = true; flushViews(); return; }
+    if (res.status === 429 || res.status >= 500) { requeueViews(ids); }
+  }, function () {
+    viewsSending = false;
+    requeueViews(ids);
+  });
+}
+setInterval(flushViews, 30000);
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'hidden') { flushViewsOnHide(); }
+});
+window.addEventListener('pagehide', flushViewsOnHide);
 function toggleSound() {
   soundOn = !soundOn;
   var vs = feed.querySelectorAll('video');
@@ -258,12 +331,22 @@ feed.addEventListener('click', function (e) {
     openContact(item);
   } else if (act === 'like') {
     if (!me) { needLogin('Prijavi se da označiš šta ti se sviđa.'); return; }
-    api('POST', '/api/listings/' + item.id + '/like').then(function (d) {
+    // Dok zahtjev za ovaj oglas traje, novi dodiri na isto srce se ne šalju.
+    if (likeBusy[item.id]) { return; }
+    var want = !item.liked, wasLiked = item.liked, wasLikes = item.likes;
+    likeBusy[item.id] = true;
+    item.liked = want; item.likes = Math.max(0, item.likes + (want ? 1 : -1));
+    paintLike(item);
+    api('POST', '/api/listings/' + item.id + '/like', { liked: want }).then(function (d) {
+      delete likeBusy[item.id];
       item.liked = d.liked; item.likes = d.likes;
-      btn.classList.toggle('on', d.liked);
-      btn.setAttribute('aria-pressed', d.liked ? 'true' : 'false');
-      btn.querySelector('.n').textContent = d.likes;
-    }).catch(function (err) { toast(err.message); });
+      paintLike(item);
+    }).catch(function (err) {
+      delete likeBusy[item.id];
+      item.liked = wasLiked; item.likes = wasLikes;
+      paintLike(item);
+      toast(err.message);
+    });
   } else if (act === 'share') {
     shareListing(item);
   } else if (act === 'edit') {
@@ -403,17 +486,32 @@ $('#back').addEventListener('click', function () {
 
 /* ---------- profil butika (kako ga vide kupci) ---------- */
 
+function shopTileHTML(i, b) {
+  return '<li class="tile">' + tileMedia(i) +
+    '<span class="tile-price">' + fmtKM(i.price) + '</span>' +
+    '<button type="button" class="tile-open" data-open="' + i.id + '" data-handle="' + esc(b.handle) + '" data-name="' + esc(b.shopName) + '" aria-label="Otvori oglas ' + esc(i.title) + '"></button></li>';
+}
+// Ima li još strana: puna strana (20) i, ako znamo ukupan broj, nije sve učitano.
+function hasMore(pageLen, loaded, total) {
+  return pageLen >= 20 && (typeof total !== 'number' || loaded < total);
+}
 function openShopProfile(handle) {
   show('shop');
   $('#vName').textContent = ''; $('#vHandle').textContent = '@' + handle;
   $('#vAvatar').textContent = 'B'; $('#vCount').textContent = '0';
   $('#vContact').innerHTML = ''; $('#vGrid').innerHTML = '';
+  $('#vMore').hidden = true; vItems = []; vShop = null; vMoreOn = false; vBusy = false;
   $('#vHint').textContent = 'Učitavam profil…';
+  var token = {}; openShopProfile.token = token;
   Promise.all([
     api('GET', '/api/shops/' + encodeURIComponent(handle)),
     api('GET', '/api/listings?shop=' + encodeURIComponent(handle))
   ]).then(function (r) {
+    if (openShopProfile.token !== token) { return; }
     var b = r[0].butik, list = r[1].oglasi, rows = contactRows(b);
+    vShop = b; vItems = list.slice();
+    vMoreOn = hasMore(list.length, list.length, typeof b.listings === 'number' ? b.listings : r[1].ukupno);
+    $('#vMore').hidden = !vMoreOn;
     $('#vMsg').hidden = isShop();
     $('#vMsg').setAttribute('data-handle', b.handle);
     $('#vName').textContent = b.shopName;
@@ -422,13 +520,26 @@ function openShopProfile(handle) {
     $('#vCount').textContent = b.listings;
     $('#vContact').innerHTML = rows.join('');
     $('#vHint').textContent = rows.length ? '' : 'Ovaj butik još nije upisao telefon ni linkove.';
-    $('#vGrid').innerHTML = list.map(function (i) {
-      return '<li class="tile">' + tileMedia(i) +
-        '<span class="tile-price">' + fmtKM(i.price) + '</span>' +
-        '<button type="button" class="tile-open" data-open="' + i.id + '" data-handle="' + esc(b.handle) + '" data-name="' + esc(b.shopName) + '" aria-label="Otvori oglas ' + esc(i.title) + '"></button></li>';
-    }).join('');
-  }).catch(function (err) { $('#vHint').textContent = err.message; });
+    $('#vGrid').innerHTML = list.map(function (i) { return shopTileHTML(i, b); }).join('');
+  }).catch(function (err) { if (openShopProfile.token === token) { $('#vHint').textContent = err.message; } });
 }
+$('#vMore').addEventListener('click', function () {
+  if (vBusy || !vMoreOn || !vShop || !vItems.length) { return; }
+  var b = vShop, token = openShopProfile.token, btn = $('#vMore');
+  vBusy = true; btn.disabled = true; btn.textContent = 'Učitavam…';
+  api('GET', '/api/listings?shop=' + encodeURIComponent(b.handle) + '&before=' + vItems[vItems.length - 1].id).then(function (d) {
+    vBusy = false; btn.disabled = false; btn.textContent = 'Učitaj još';
+    if (openShopProfile.token !== token) { return; }
+    var fresh = d.oglasi.filter(function (i) { return !vItems.some(function (x) { return x.id === i.id; }); });
+    vItems = vItems.concat(fresh);
+    $('#vGrid').insertAdjacentHTML('beforeend', fresh.map(function (i) { return shopTileHTML(i, b); }).join(''));
+    vMoreOn = hasMore(d.oglasi.length, vItems.length, typeof b.listings === 'number' ? b.listings : undefined);
+    btn.hidden = !vMoreOn;
+  }).catch(function (err) {
+    vBusy = false; btn.disabled = false; btn.textContent = 'Učitaj još';
+    toast(err.message);
+  });
+});
 $('#vGrid').addEventListener('click', function (e) {
   var b = e.target.closest('[data-open]');
   if (!b) { return; }
@@ -647,26 +758,63 @@ function renderProfile() {
 }
 // Brojke se osvježavaju same dok je profil otvoren. Mreža snimaka se crta ponovo
 // samo kad se promijeni spisak oglasa, da snimci ne trepere.
+function profileListURL() {
+  return isShop() ? '/api/listings?shop=' + encodeURIComponent(me.handle) : '/api/listings?liked=1';
+}
+function profileTileHTML(i, shopRole) {
+  return '<li class="tile">' + tileMedia(i) +
+    '<span class="tile-price">' + fmtKM(i.price) + '</span>' +
+    '<button type="button" class="tile-open" data-open="' + i.id + '" aria-label="Otvori oglas ' + esc(i.title) + '"></button>' +
+    (shopRole ? '<button type="button" class="tile-del" data-del="' + i.id + '" aria-label="Obriši oglas ' + esc(i.title) + '">×</button>' : '') + '</li>';
+}
+var pTotal;   // ukupno iz odgovora (novi API) ili undefined (stari API)
+function paintProfileStats() {
+  $('#pCount').textContent = typeof pTotal === 'number' ? pTotal : pItems.length;
+  $('#pLikes').textContent = pItems.reduce(function (n, i) { return n + i.likes; }, 0);
+  $('#pEmpty').hidden = pItems.length > 0;
+}
+// Učitava (ponovo) prvu stranu mreže na profilu; dodatne strane se brišu.
 function loadProfileGrid() {
   if (!me) { return; }
-  var shopRole = isShop();
-  api('GET', shopRole ? '/api/listings?shop=' + encodeURIComponent(me.handle) : '/api/listings?liked=1').then(function (d) {
-    if (!me) { return; }
+  var shopRole = isShop(), who = me.id;
+  api('GET', profileListURL()).then(function (d) {
+    if (!me || me.id !== who) { return; }
     var list = d.oglasi;
-    $('#pCount').textContent = list.length;
-    $('#pLikes').textContent = list.reduce(function (n, i) { return n + i.likes; }, 0);
-    $('#pEmpty').hidden = list.length > 0;
+    pTotal = typeof d.ukupno === 'number' ? d.ukupno : undefined;
+    pItems = list.slice(); pPages = 1;
+    pMoreOn = hasMore(list.length, list.length, pTotal);
+    $('#pMore').hidden = !pMoreOn;
+    paintProfileStats();
     var sig = list.map(function (i) { return i.id; }).join(',');
     if (sig === gridSig) { return; }
     gridSig = sig;
-    $('#pGrid').innerHTML = list.map(function (i) {
-      return '<li class="tile">' + tileMedia(i) +
-        '<span class="tile-price">' + fmtKM(i.price) + '</span>' +
-        '<button type="button" class="tile-open" data-open="' + i.id + '" aria-label="Otvori oglas ' + esc(i.title) + '"></button>' +
-        (shopRole ? '<button type="button" class="tile-del" data-del="' + i.id + '" aria-label="Obriši oglas ' + esc(i.title) + '">×</button>' : '') + '</li>';
-    }).join('');
+    $('#pGrid').innerHTML = list.map(function (i) { return profileTileHTML(i, shopRole); }).join('');
   }).catch(function (err) { if (gridSig === null) { toast(err.message); } });
 }
+// Samo osvježavanje (tajmer, povratak na stranicu): preskače se ako su učitane dodatne strane.
+function refreshProfileGrid() {
+  if (profile.hidden || !pageVisible() || pBusy || pPages > 1) { return; }
+  loadProfileGrid();
+}
+$('#pMore').addEventListener('click', function () {
+  if (!me || pBusy || !pMoreOn || !pItems.length) { return; }
+  var shopRole = isShop(), who = me.id, btn = $('#pMore');
+  pBusy = true; btn.disabled = true; btn.textContent = 'Učitavam…';
+  api('GET', profileListURL() + '&before=' + pItems[pItems.length - 1].id).then(function (d) {
+    pBusy = false; btn.disabled = false; btn.textContent = 'Učitaj još';
+    if (!me || me.id !== who) { return; }
+    var fresh = d.oglasi.filter(function (i) { return !pItems.some(function (x) { return x.id === i.id; }); });
+    pItems = pItems.concat(fresh); pPages += 1;
+    $('#pGrid').insertAdjacentHTML('beforeend', fresh.map(function (i) { return profileTileHTML(i, shopRole); }).join(''));
+    gridSig = null;
+    pMoreOn = hasMore(d.oglasi.length, pItems.length, pTotal);
+    btn.hidden = !pMoreOn;
+    paintProfileStats();
+  }).catch(function (err) {
+    pBusy = false; btn.disabled = false; btn.textContent = 'Učitaj još';
+    toast(err.message);
+  });
+});
 $('#pGrid').addEventListener('click', function (e) {
   var o = e.target.closest('[data-open]');
   if (o && isShop()) { openShop(me.handle, me.name, o.getAttribute('data-open')); return; }
@@ -692,8 +840,8 @@ function show(view, keepFeed) {
   if (view !== 'chat') { stopChat(); }
   clearInterval(profileTimer); profileTimer = null;
   clearInterval(feedTimer); feedTimer = null;
-  if (isFeed) { feedTimer = setInterval(refreshLikes, 5000); }
-  if (view === 'profile') { profileTimer = setInterval(loadProfileGrid, 5000); }
+  if (isFeed) { feedTimer = setInterval(refreshLikes, 15000); }
+  if (view === 'profile') { profileTimer = setInterval(refreshProfileGrid, 30000); }
   var tabView = view === 'chat' ? 'inbox' : (view === 'admin' ? 'profile' : view);
   var ts = tabs.querySelectorAll('.tab');
   for (var k = 0; k < ts.length; k++) {
@@ -723,6 +871,8 @@ function refreshUnread() {
   if (!me) { setBadge(0); return; }
   api('GET', '/api/me').then(function (d) { if (d.korisnik) { setBadge(d.neprocitano); } }, function () {});
 }
+// Tajmer značke: samo dok je stranica vidljiva.
+function tickUnread() { if (pageVisible()) { refreshUnread(); } }
 // Mobilna aplikacija predaje push token; serveru ga prijavljujemo kad je korisnik prijavljen.
 function registerPush() {
   if (me && pushToken) { api('POST', '/api/me/push-token', { token: pushToken }).catch(function () {}); }
@@ -755,7 +905,7 @@ function afterAuthChange() {
   registerPush();
   $('#tabPost').hidden = !isShop();
   clearInterval(unreadTimer); unreadTimer = null;
-  if (me) { unreadTimer = setInterval(refreshUnread, 30000); }
+  if (me) { unreadTimer = setInterval(tickUnread, 60000); }
   refreshUnread();
   if (!profile.hidden) { renderProfile(); }
   if (!me && (!inbox.hidden || !chat.hidden || !admin.hidden)) { show('profile'); }
@@ -764,11 +914,12 @@ function afterAuthChange() {
 
 // Kad se korisnik vrati na karticu preglednika, osvježi ono što gleda.
 document.addEventListener('visibilitychange', function () {
-  if (document.hidden || !me) { return; }
+  if (!pageVisible() || !me) { return; }
   refreshUnread();
-  if (!profile.hidden) { loadProfileGrid(); }
+  refreshProfileGrid();
   refreshLikes();
   if (!inbox.hidden) { renderInbox(); }
+  if (chatId && chatTimer) { pollChat(); }
 });
 
 /* ---------- lozinka ---------- */
@@ -834,7 +985,7 @@ function appendMessages(list) {
   log.scrollTop = log.scrollHeight;
 }
 function pollChat() {
-  if (!chatId) { return; }
+  if (!chatId || !pageVisible()) { return; }
   var id = chatId;
   api('GET', '/api/conversations/' + id + '/messages?after=' + chatLast).then(function (d) {
     if (chatId === id) { appendMessages(d.poruke); }
@@ -1076,8 +1227,8 @@ var startId = /^\d+$/.test(params.get('o') || '') ? params.get('o') : null;
 var startShop = params.get('b');
 api('GET', '/api/me').then(function (d) { me = d.korisnik; setBadge(d.neprocitano); }, function () {}).then(function () {
   $('#tabPost').hidden = !isShop();
-  if (me) { unreadTimer = setInterval(refreshUnread, 30000); }
-  feedTimer = setInterval(refreshLikes, 5000);
+  if (me) { unreadTimer = setInterval(tickUnread, 60000); }
+  feedTimer = setInterval(refreshLikes, 15000);
   toApp({ type: 'ready' });
   var confirmed = params.get('potvrda'), chatParam = params.get('poruke');
   resetToken = /^[a-f0-9]{20,100}$/.test(params.get('lozinka') || '') ? params.get('lozinka') : null;

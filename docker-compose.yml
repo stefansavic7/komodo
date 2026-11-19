@@ -1,16 +1,38 @@
 # Komodo na serveru. Tajne su u .env (korijen projekta) i api/.env — vidi docs/SERVER.md.
+# Veličine (procesi, memorija, baza) se biraju profilom u .env (server/env.server.primjer).
+# Zadane vrijednosti ispod su za mali server: ništa nije postavljeno → 2 procesa, 512 MB API, 512 MB baza.
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    # Mala potrošnja memorije, da Komodo može raditi i na Terminkovom serveru (vidi docs/SERVER.md, odjeljak 0).
-    command: ["postgres", "-c", "shared_buffers=${DB_SHARED_BUFFERS:-128MB}", "-c", "max_connections=${DB_MAX_CONNECTIONS:-50}"]
+    # Pravilo: max_connections > (WORKERS + 1) × PG_POOL + rezerva (~10 za psql, kopiju baze, superuser).
+    # Zadano: (2 + 1) × 10 + 10 = 40 < 50. work_mem se troši po operaciji, pa
+    # max_connections × work_mem + shared_buffers mora ostati ispod DB_MEM (zadano 50 × 4 + 128 = 328 MB < 512 MB).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${DB_SHARED_BUFFERS:-128MB}
+      - -c
+      - max_connections=${DB_MAX_CONNECTIONS:-50}
+      - -c
+      - effective_cache_size=${DB_EFFECTIVE_CACHE_SIZE:-384MB}
+      - -c
+      - work_mem=${DB_WORK_MEM:-4MB}
+      - -c
+      - maintenance_work_mem=${DB_MAINTENANCE_WORK_MEM:-64MB}
+      - -c
+      - max_wal_size=${DB_MAX_WAL_SIZE:-1GB}
+      - -c
+      - random_page_cost=1.1   # NVMe disk: nasumično čitanje je skoro jednako sekvencijalnom
     environment:
-      POSTGRES_USER: komodo
+      POSTGRES_USER: komodo   # službena slika pravi ovog korisnika kao superusera (treba za `create extension pg_trgm`)
       POSTGRES_DB: komodo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Upiši POSTGRES_PASSWORD u .env}
     volumes:
       - db-data:/var/lib/postgresql/data
+    # /dev/shm: Postgres ga koristi za dijeljenu memoriju upita (paralelni upiti). Dockerov zadani 64 MB je premalo
+    # za veće servere ("could not resize shared memory segment"). Troši se samo ono što se stvarno koristi.
+    shm_size: ${DB_SHM_SIZE:-128m}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U komodo -d komodo"]
       interval: 10s
@@ -24,6 +46,8 @@ services:
   api:
     build: .
     restart: unless-stopped
+    init: true   # mali init proces: prosljeđuje signale (docker stop) i čisti ugašene radne procese
+    stop_grace_period: 20s   # index.js čeka radnike do 15 s pri gašenju; Dockerov zadani je 10 s
     env_file: api/.env
     environment:
       NODE_ENV: production
@@ -31,7 +55,14 @@ services:
       PORT: 3002
       UPLOADS_DIR: /data/uploads
       DATABASE_URL: postgres://komodo:${POSTGRES_PASSWORD}@db:5432/komodo
-      NODE_OPTIONS: ${NODE_OPTIONS:-}
+      # Uvijek zadato izričito: unutar kontejnera Node vidi sva jezgra servera, ne ograničenje kontejnera.
+      WORKERS: ${WORKERS:-2}
+      PG_POOL: ${PG_POOL:-10}
+      LOG_REQUESTS: ${LOG_REQUESTS:-0}
+      UV_THREADPOOL_SIZE: ${UV_THREADPOOL_SIZE:-8}
+      # Heap po procesu: WORKERS × max-old-space-size + ~50 MB ostatka po procesu (i glavnom) mora stati u API_MEM.
+      # Zadano: 2 × 160 + 3 × 50 = 470 MB < 512 MB.
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=160}
     volumes:
       - uploads:/data/uploads
     ports:

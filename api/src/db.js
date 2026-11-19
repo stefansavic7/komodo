@@ -7,7 +7,8 @@ if (!process.env.DATABASE_URL) {
   throw new Error('Nedostaje DATABASE_URL u api/.env (vidi api/env.primjer).');
 }
 
-export const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
+// Veza po procesu: s više procesa (src/index.js) ukupno ih je WORKERS × PG_POOL.
+export const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: Number(process.env.PG_POOL) || 10 });
 
 export function q(text, params) {
   return pool.query(text, params);

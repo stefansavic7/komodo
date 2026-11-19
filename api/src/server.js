@@ -1,16 +1,16 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createWriteStream, readFileSync } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { migrate, pool, q } from './db.js';
 import { mailOn, sendMail } from './mail.js';
-import { checkPassword, createShop, freeHandle, hashPassword, validEmail } from './nalog.js';
+import { checkPassword, createShop, hashPassword, insertUser, validEmail } from './nalog.js';
 import { bunnyOn, bunnyState, deleteFromBunny, mediaUrls, uploadToBunny } from './video.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -75,21 +75,27 @@ function isAdmin(u) {
   return !!u && ADMIN_EMAILS.includes(u.email);
 }
 
-// Ograničenje učestalosti u memoriji: true ako je ključ prešao `max` pokušaja u prozoru.
-const hits = new Map();
-function limited(key, max, windowMs) {
-  const now = Date.now();
-  const list = (hits.get(key) || []).filter((t) => now - t < windowMs);
-  list.push(now);
-  hits.set(key, list);
-  return list.length > max;
+// Ograničenje učestalosti u bazi (tabela rate_limits), zajedničko za sve procese.
+// Fiksni prozor: prvi pokušaj otvara prozor od `windowMs`; kad istekne, brojanje kreće ispočetka.
+// Vraća true ako je ključ prešao `max` pokušaja u trenutnom prozoru.
+async function limited(key, max, windowMs) {
+  const res = await q(
+    `insert into rate_limits(key, window_start, hits) values ($1, now(), 1)
+     on conflict (key) do update set
+       hits = case when rate_limits.window_start <= now() - make_interval(secs => $2) then 1 else rate_limits.hits + 1 end,
+       window_start = case when rate_limits.window_start <= now() - make_interval(secs => $2) then now() else rate_limits.window_start end
+     returning hits`,
+    [key, windowMs / 1000],
+  );
+  return res.rows[0].hits > max;
 }
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, list] of hits) {
-    if (list.every((t) => now - t > 60 * MIN)) hits.delete(key);
-  }
-}, 10 * MIN).unref();
+
+// Ograničena mapa (keš): kad pređe `limit` unosa, izbacuju se najstariji upisani.
+function boundedSet(map, key, value, limit) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > limit) map.delete(map.keys().next().value);
+}
 
 function publicUser(u) {
   return {
@@ -111,7 +117,7 @@ function publicListing(r) {
     createdAt: r.created_at,
     shopName: r.shop_name,
     handle: r.handle,
-    likes: Number(r.likes),
+    likes: Number(r.likes_count),
     liked: r.liked === true,
     mine: r.mine === true,
     sold: r.sold === true,
@@ -120,10 +126,9 @@ function publicListing(r) {
 }
 
 const LISTING_SELECT = `
-  select l.id, l.title, l.price_cents, l.category, l.video_path, l.created_at, l.sold, l.views,
-         l.video_provider, l.video_status, l.bunny_guid, l.video_res,
+  select l.id, l.user_id, l.title, l.price_cents, l.category, l.video_path, l.created_at, l.sold, l.views,
+         l.video_provider, l.video_status, l.bunny_guid, l.video_res, l.likes_count,
          u.shop_name, u.handle,
-         (select count(*) from likes k where k.listing_id = l.id) as likes,
          exists(select 1 from likes k where k.listing_id = l.id and k.user_id = $1) as liked,
          (l.user_id = $1) as mine
     from listings l
@@ -132,6 +137,22 @@ const LISTING_SELECT = `
      and (l.video_status <> 'error' or l.user_id = $1)`;
 
 const VIDEO_COLS = 'video_path, video_provider, bunny_guid';
+
+// Izvršava fn(client) u jednoj transakciji i vraća njen rezultat.
+async function inTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const out = await fn(client);
+    await client.query('commit');
+    return out;
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 // Briše snimke obrisanih oglasa: lokalni fajl i, ako postoji, snimak na Bunnyju.
 async function removeListingFiles(rows, log = app.log) {
@@ -143,23 +164,79 @@ async function removeListingFiles(rows, log = app.log) {
 
 /* ---------- aplikacija ---------- */
 
-const app = Fastify({ logger: true, bodyLimit: 64 * 1024, trustProxy: PROD });
+// Svaki uspješan zahtjev se ne zapisuje (skupo pri hiljadama zahtjeva u sekundi); LOG_REQUESTS=1 ga uključuje.
+// Greške se i dalje bilježe (setErrorHandler).
+const app = Fastify({
+  logger: true, bodyLimit: 64 * 1024, trustProxy: PROD,
+  logController: new LogController({ disableRequestLogging: process.env.LOG_REQUESTS !== '1' }),
+});
 
 await mkdir(UPLOADS_DIR, { recursive: true });
 await app.register(cookie);
 await app.register(multipart, { limits: { fileSize: MAX_VIDEO_MB * 1024 * 1024, files: 1, fields: 10 } });
 await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: '/media/', decorateReply: false, maxAge: '7d' });
-await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/' });
+await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/', index: false });
+
+// index.html dobija oznaku verzije na /app.js i /style.css (otisak sadržaja), pa keš u Nginxu i
+// pregledniku nikad ne služi stari app.js uz novi index.html. Računa se jednom pri startu.
+const verzija = createHash('sha1')
+  .update(readFileSync(path.join(WEB_DIR, 'app.js')))
+  .update(readFileSync(path.join(WEB_DIR, 'style.css')))
+  .digest('hex').slice(0, 10);
+const INDEX_HTML = readFileSync(path.join(WEB_DIR, 'index.html'), 'utf8')
+  .replace('href="/style.css"', `href="/style.css?v=${verzija}"`)
+  .replace('src="/app.js"', `src="/app.js?v=${verzija}"`);
+function sendIndex(reply) {
+  return reply.type('text/html; charset=utf-8').header('Cache-Control', 'no-cache').send(INDEX_HTML);
+}
+app.get('/', (req, reply) => sendIndex(reply));
+app.get('/index.html', (req, reply) => sendIndex(reply));
+
+// Keš prijava: token → korisnik (ili null), 15 sekundi, u memoriji svakog procesa posebno.
+// Kod odjave, promjene lozinke, brisanja i gašenja naloga, izmjene profila i potvrde emaila keš se
+// poništava odmah, ali samo u procesu koji je obradio zahtjev. Ostali procesi (src/index.js) mogu
+// do 15 s vidjeti staro stanje (npr. odjavljena sesija još radi, stari naziv profila) — to je prihvaćeno.
+// Vraćeni objekat je zajednički za više zahtjeva i ne smije se mijenjati.
+const USER_TTL = 15 * 1000;
+const USER_CACHE_MAX = 50000;
+const userCache = new Map();
 
 async function currentUser(req) {
   const token = req.cookies.sid;
   if (!token) return null;
+  const hit = userCache.get(token);
+  if (hit && hit.exp > Date.now()) return hit.user;
   const res = await q(
     `select u.* from sessions s join users u on u.id = s.user_id
       where s.token = $1 and s.expires_at > now() and u.suspended_at is null`,
     [token],
   );
-  return res.rows[0] || null;
+  const user = res.rows[0] || null;
+  boundedSet(userCache, token, { user, exp: Date.now() + USER_TTL }, USER_CACHE_MAX);
+  return user;
+}
+
+function forgetToken(token) {
+  if (token) userCache.delete(token);
+}
+
+// Poništava sve keširane sesije jednog korisnika (rijetke radnje, pa je prolaz kroz mapu prihvatljiv).
+function forgetUser(userId) {
+  for (const [token, hit] of userCache) {
+    if (hit.user && hit.user.id === userId) userCache.delete(token);
+  }
+}
+
+// Uređaj (kolačić `did`): za brojanje pregleda neprijavljenih i ograničenje registracija po uređaju.
+// Ako ga nema, server ga napravi i postavi u odgovoru.
+function deviceId(req, reply) {
+  const did = req.cookies.did;
+  if (did && /^[A-Za-z0-9_-]{16,64}$/.test(did)) return did;
+  const fresh = randomBytes(16).toString('base64url');
+  reply.setCookie('did', fresh, {
+    path: '/', httpOnly: true, sameSite: 'lax', secure: PROD, maxAge: 365 * 24 * 3600,
+  });
+  return fresh;
 }
 
 async function startSession(reply, userId) {
@@ -202,7 +279,10 @@ app.get('/api/categories', async () => ({ kategorije: CATEGORIES }));
 /* ---------- nalog ---------- */
 
 app.post('/api/auth/register', async (req, reply) => {
-  if (limited(`reg:${req.ip}`, 5, 60 * MIN)) return bad(reply, 429, 'Previše novih naloga s ove adrese. Pokušaj za sat vremena.');
+  // Mobilni operateri dijele jednu IP adresu na mnogo ljudi (CGNAT), pa je ograničenje po IP široko,
+  // a uže je po uređaju (kolačić `did`).
+  if (await limited(`reg:ip:${req.ip}`, 60, 60 * MIN)) return bad(reply, 429, 'Previše novih naloga s ove adrese. Pokušaj za sat vremena.');
+  if (await limited(`reg:did:${deviceId(req, reply)}`, 5, 60 * MIN)) return bad(reply, 429, 'Previše novih naloga s ovog uređaja. Pokušaj za sat vremena.');
   const body = req.body || {};
   const email = clean(body.email, 200).toLowerCase();
   const password = String(body.password ?? '');
@@ -212,23 +292,33 @@ app.post('/api/auth/register', async (req, reply) => {
   if (name.length < 2) return bad(reply, 400, 'Upiši svoje ime.');
   const exists = await q('select 1 from users where email = $1', [email]);
   if (exists.rowCount > 0) return bad(reply, 409, 'Nalog s ovom email adresom već postoji. Prijavi se.');
-  const handle = await freeHandle(name);
-  // Bez podešenog emaila (razvoj) nalog je odmah potvrđen.
-  const res = await q(
-    `insert into users(email, password_hash, shop_name, handle, role, email_verified_at)
-     values ($1, $2, $3, $4, 'kupac', $5) returning *`,
-    [email, await hashPassword(password), name, handle, mailOn ? null : new Date()],
-  );
-  if (mailOn) await sendVerification(req.log, res.rows[0]);
-  await startSession(reply, res.rows[0].id);
-  return reply.code(201).send({ korisnik: publicUser(res.rows[0]) });
+  const passwordHash = await hashPassword(password);
+  // Istovremene registracije: zauzet email → 409, zauzet handle → novi pokušaj (insertUser).
+  let user;
+  try {
+    // Bez podešenog emaila (razvoj) nalog je odmah potvrđen.
+    user = await insertUser(name, async (handle) => (await q(
+      `insert into users(email, password_hash, shop_name, handle, role, email_verified_at)
+       values ($1, $2, $3, $4, 'kupac', $5) returning *`,
+      [email, passwordHash, name, handle, mailOn ? null : new Date()],
+    )).rows[0]);
+  } catch (err) {
+    if (err.code === 'EMAIL_ZAUZET') return bad(reply, 409, 'Nalog s ovom email adresom već postoji. Prijavi se.');
+    throw err;
+  }
+  if (mailOn) await sendVerification(req.log, user);
+  await startSession(reply, user.id);
+  return reply.code(201).send({ korisnik: publicUser(user) });
 });
 
 app.post('/api/auth/login', async (req, reply) => {
   const body = req.body || {};
   const email = clean(body.email, 200).toLowerCase();
   const password = String(body.password ?? '');
-  if (limited(`login:${req.ip}:${email}`, 10, 15 * MIN)) return bad(reply, 429, 'Previše pokušaja prijave. Pokušaj ponovo za 15 minuta.');
+  const tooMany = await limited(`login:ip:${req.ip}:${email}`, 10, 15 * MIN);
+  if (await limited(`login:email:${email}`, 30, 15 * MIN) || tooMany) {
+    return bad(reply, 429, 'Previše pokušaja prijave. Pokušaj ponovo za 15 minuta.');
+  }
   const res = await q('select * from users where email = $1', [email]);
   const user = res.rows[0];
   if (!user || !(await checkPassword(password, user.password_hash))) {
@@ -240,7 +330,10 @@ app.post('/api/auth/login', async (req, reply) => {
 });
 
 app.post('/api/auth/logout', async (req, reply) => {
-  if (req.cookies.sid) await q('delete from sessions where token = $1', [req.cookies.sid]);
+  if (req.cookies.sid) {
+    await q('delete from sessions where token = $1', [req.cookies.sid]);
+    forgetToken(req.cookies.sid);
+  }
   reply.clearCookie('sid', { path: '/' });
   return { ok: true };
 });
@@ -252,6 +345,7 @@ app.get('/api/auth/verify', async (req, reply) => {
   );
   if (res.rowCount === 0) return reply.redirect('/?potvrda=istekla');
   await q('update users set email_verified_at = coalesce(email_verified_at, now()) where id = $1', [res.rows[0].user_id]);
+  forgetUser(res.rows[0].user_id);
   return reply.redirect('/?potvrda=ok');
 });
 
@@ -259,15 +353,18 @@ app.post('/api/auth/resend', async (req, reply) => {
   const user = await currentUser(req);
   if (!user) return bad(reply, 401, 'Prijavi se.');
   if (user.email_verified_at) return { ok: true };
-  if (limited(`resend:${user.id}`, 3, 60 * MIN)) return bad(reply, 429, 'Link je već poslan. Provjeri poštu, pa pokušaj ponovo za sat vremena.');
+  if (await limited(`resend:${user.id}`, 3, 60 * MIN)) return bad(reply, 429, 'Link je već poslan. Provjeri poštu, pa pokušaj ponovo za sat vremena.');
   await sendVerification(req.log, user);
   return { ok: true };
 });
 
 // Uvijek odgovara isto, da se ne može provjeriti postoji li nalog s tom adresom.
 app.post('/api/auth/forgot', async (req, reply) => {
-  if (limited(`forgot:${req.ip}`, 5, 60 * MIN)) return bad(reply, 429, 'Previše zahtjeva. Pokušaj ponovo za sat vremena.');
   const email = clean((req.body || {}).email, 200).toLowerCase();
+  const tooMany = await limited(`forgot:ip:${req.ip}`, 20, 60 * MIN);
+  if (await limited(`forgot:email:${email}`, 3, 60 * MIN) || tooMany) {
+    return bad(reply, 429, 'Previše zahtjeva. Pokušaj ponovo za sat vremena.');
+  }
   const res = await q('select * from users where email = $1 and suspended_at is null', [email]);
   if (res.rowCount > 0) {
     const token = await emailToken(res.rows[0].id, 'lozinka', 1);
@@ -295,6 +392,7 @@ app.post('/api/auth/reset', async (req, reply) => {
     [await hashPassword(password), userId],
   );
   await q('delete from sessions where user_id = $1', [userId]);
+  forgetUser(userId);
   await startSession(reply, userId);
   const user = await q('select * from users where id = $1', [userId]);
   return { korisnik: publicUser(user.rows[0]) };
@@ -322,6 +420,7 @@ app.patch('/api/me', async (req, reply) => {
     'update users set shop_name = $1, phone = $2, links = $3::jsonb, push_enabled = $4 where id = $5 returning *',
     [shopName, phone, JSON.stringify(links), pushEnabled, user.id],
   );
+  forgetUser(user.id); // i push prekidač (pushEnabled) ide ovuda
   return { korisnik: publicUser(res.rows[0]) };
 });
 
@@ -334,6 +433,7 @@ app.post('/api/me/password', async (req, reply) => {
   if (next.length < 8) return bad(reply, 400, 'Nova lozinka mora imati najmanje 8 znakova.');
   await q('update users set password_hash = $1 where id = $2', [await hashPassword(next), user.id]);
   await q('delete from sessions where user_id = $1 and token <> $2', [user.id, req.cookies.sid]);
+  forgetUser(user.id);
   return { ok: true };
 });
 
@@ -359,7 +459,23 @@ app.post('/api/me/delete', async (req, reply) => {
     return bad(reply, 400, 'Lozinka nije tačna.');
   }
   const files = await q(`select ${VIDEO_COLS} from listings where user_id = $1 and deleted_at is null`, [user.id]);
-  await q('delete from users where id = $1', [user.id]);
+  // Sviđanja korisnika nestaju kaskadno, pa se u istoj transakciji umanjuje likes_count tih oglasa.
+  await inTransaction(async (c) => {
+    await c.query('select id from users where id = $1 for update', [user.id]);
+    // Redovi oglasa se zaključavaju po redu id-ja, da se dva istovremena brisanja ne zaglave.
+    await c.query(
+      `select id from listings where id in (select listing_id from likes where user_id = $1)
+        order by id for no key update`,
+      [user.id],
+    );
+    await c.query(
+      `update listings l set likes_count = l.likes_count - 1
+         from likes k where k.listing_id = l.id and k.user_id = $1`,
+      [user.id],
+    );
+    await c.query('delete from users where id = $1', [user.id]);
+  });
+  forgetUser(user.id);
   await removeListingFiles(files.rows);
   reply.clearCookie('sid', { path: '/' });
   return { ok: true };
@@ -386,27 +502,81 @@ app.get('/api/shops/:handle', async (req, reply) => {
 
 /* ---------- oglasi ---------- */
 
+// Keš javnog feeda: osnovni redovi oglasa (bez liked/mine) po normalizovanim parametrima, 5 sekundi,
+// u memoriji svakog procesa. Istovremeni zahtjevi za isti ključ čekaju isti upit.
+const FEED_TTL = 5 * 1000;
+const FEED_CACHE_MAX = 2000;
+const feedCache = new Map();
+
+function feedRows(key, sql, params) {
+  const hit = feedCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.rows;
+  const rows = q(sql, params).then((r) => r.rows);
+  boundedSet(feedCache, key, { rows, exp: Date.now() + FEED_TTL }, FEED_CACHE_MAX);
+  rows.catch(() => { if (feedCache.get(key)?.rows === rows) feedCache.delete(key); });
+  return rows;
+}
+
 app.get('/api/listings', async (req) => {
   const user = await currentUser(req);
-  const { category, shop, before } = req.query;
-  const params = [user ? user.id : 0];
+  const { category, before } = req.query;
+  const shop = req.query.shop ? String(req.query.shop).toLowerCase() : '';
+  const liked = req.query.liked === '1';
+  // Oglase sa snimkom u grešci vidi samo vlasnik, pa vlastiti butik i lista sviđanja idu mimo keša.
+  const direct = liked || (user && shop && shop === user.handle);
+  const params = [direct && user ? user.id : 0];
+  const norm = {};
   let where = '';
   const add = (sql, value) => { params.push(value); where += sql.replace('?', `$${params.length}`); };
-  if (category && CATEGORIES.includes(category)) add(' and l.category = ?', category);
-  if (shop) add(' and u.handle = ?', String(shop).toLowerCase());
-  if (isId(before)) add(' and l.id < ?', Number(before));
-  if (req.query.liked === '1') where += ' and exists(select 1 from likes k where k.listing_id = l.id and k.user_id = $1)';
+  if (category && CATEGORIES.includes(category)) { add(' and l.category = ?', category); norm.c = category; }
+  if (shop) { add(' and u.handle = ?', shop); norm.s = shop; }
+  if (liked) where += ' and l.id in (select k.listing_id from likes k where k.user_id = $1)';
   const search = clean(req.query.q, 60);
   if (search) {
+    // Unija dva podupita, da baza koristi trigram indekse na listings.title i users.shop_name
+    // (s `or` preko spoja ih ne koristi i za rijetku riječ pregleda cijelu tabelu).
     params.push(`%${search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
-    where += ` and (l.title ilike $${params.length} or u.shop_name ilike $${params.length})`;
+    const n = params.length;
+    where += ` and l.id in (select t.id from listings t where t.title ilike $${n}
+                union select t.id from listings t join users s on s.id = t.user_id where s.shop_name ilike $${n})`;
+    norm.q = search;
   }
   const min = parsePrice(req.query.min);
   const max = parsePrice(req.query.max);
-  if (min !== null) add(' and l.price_cents >= ?', min);
-  if (max !== null) add(' and l.price_cents <= ?', max);
-  const res = await q(`${LISTING_SELECT}${where} order by l.id desc limit 20`, params);
-  return { oglasi: res.rows.map(publicListing) };
+  if (min !== null) { add(' and l.price_cents >= ?', min); norm.min = min; }
+  if (max !== null) { add(' and l.price_cents <= ?', max); norm.max = max; }
+  const filters = where;
+  const filterParams = [...params];
+  if (isId(before)) { add(' and l.id < ?', Number(before)); norm.b = Number(before); }
+  const sql = `${LISTING_SELECT}${where} order by l.id desc limit 20`;
+
+  let rows;
+  if (direct) {
+    rows = (await q(sql, params)).rows;
+  } else {
+    rows = await feedRows(JSON.stringify(norm), sql, params);
+    let likedIds = new Set();
+    if (user && rows.length > 0) {
+      const lk = await q(
+        'select listing_id from likes where user_id = $1 and listing_id = any($2::int[])',
+        [user.id, rows.map((r) => r.id)],
+      );
+      likedIds = new Set(lk.rows.map((r) => r.listing_id));
+    }
+    rows = rows.map((r) => ({ ...r, liked: likedIds.has(r.id), mine: !!user && r.user_id === user.id }));
+  }
+  const out = { oglasi: rows.map(publicListing) };
+  // Ugovor: ukupan broj (butika, odnosno sviđanja) samo na prvoj stranici.
+  if ((shop || liked) && !isId(before)) {
+    const total = await q(
+      `select count(*) as n from listings l join users u on u.id = l.user_id
+        where l.deleted_at is null and u.suspended_at is null
+          and (l.video_status <> 'error' or l.user_id = $1)${filters}`,
+      filterParams,
+    );
+    out.ukupno = Number(total.rows[0].n);
+  }
+  return out;
 });
 
 // Svježi brojevi sviđanja za oglase koji su već na ekranu: /api/likes?ids=1,2,3
@@ -415,14 +585,13 @@ app.get('/api/likes', async (req) => {
   const ids = String(req.query.ids ?? '').split(',').filter(isId).slice(0, 100).map(Number);
   if (ids.length === 0) return { svidjanja: {} };
   const res = await q(
-    `select l.id,
-            (select count(*) from likes k where k.listing_id = l.id) as likes,
-            exists(select 1 from likes k where k.listing_id = l.id and k.user_id = $1) as liked
+    `select l.id, l.likes_count,
+            exists(select 1 from likes k where k.user_id = $1 and k.listing_id = l.id) as liked
        from listings l where l.id = any($2::int[]) and l.deleted_at is null`,
     [user ? user.id : 0, ids],
   );
   const out = {};
-  for (const r of res.rows) out[r.id] = { likes: Number(r.likes), liked: r.liked === true };
+  for (const r of res.rows) out[r.id] = { likes: r.likes_count, liked: r.liked === true };
   return { svidjanja: out };
 });
 
@@ -518,30 +687,73 @@ app.delete('/api/listings/:id', async (req, reply) => {
   return { ok: true };
 });
 
+// Sviđanje: s tijelom {liked: true|false} postavlja to stanje (idempotentno), bez tijela radi kao prekidač.
+// Jedna naredba (dakle jedna transakcija): red u likes se upiše (on conflict do nothing) ili obriše
+// (returning), a likes_count se mijenja samo za red koji se stvarno promijenio. Istovremeni zahtjevi čekaju
+// jedan drugog na jedinstvenom ključu i na redu oglasa, pa broj u koloni uvijek odgovara broju redova.
+const LIKE_SQL = `
+  with l as (select id, likes_count from listings where id = $2 and deleted_at is null),
+  del as (delete from likes where user_id = $1 and listing_id in (select id from l) and $3 <> 'on'
+          returning 1),
+  ins as (insert into likes(user_id, listing_id)
+          select $1, id from l where $3 = 'on' or ($3 = 'toggle' and not exists (select 1 from del))
+          on conflict do nothing
+          returning 1),
+  d as (select (select count(*) from ins) - (select count(*) from del) as delta),
+  upd as (update listings set likes_count = likes_count + (select delta from d)
+           where id in (select id from l) and (select delta from d) <> 0
+          returning likes_count)
+  select exists(select 1 from l) as found,
+         ($3 = 'on' or ($3 = 'toggle' and not exists (select 1 from del))) as liked,
+         coalesce((select likes_count from upd), (select likes_count from l)) as likes`;
+
 app.post('/api/listings/:id/like', async (req, reply) => {
   const user = await currentUser(req);
   if (!user) return bad(reply, 401, 'Prijavi se da označiš oglas.');
   if (!isId(req.params.id)) return bad(reply, 404, 'Ovaj oglas ne postoji.');
-  const id = Number(req.params.id);
-  const exists = await q('select 1 from listings where id = $1 and deleted_at is null', [id]);
-  if (exists.rowCount === 0) return bad(reply, 404, 'Ovaj oglas ne postoji ili je obrisan.');
-  const removed = await q('delete from likes where user_id = $1 and listing_id = $2', [user.id, id]);
-  if (removed.rowCount === 0) {
-    await q('insert into likes(user_id, listing_id) values ($1, $2) on conflict do nothing', [user.id, id]);
-  }
-  const count = await q('select count(*) as n from likes where listing_id = $1', [id]);
-  return { liked: removed.rowCount === 0, likes: Number(count.rows[0].n) };
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (body.liked !== undefined && typeof body.liked !== 'boolean') return bad(reply, 400, 'Polje liked mora biti true ili false.');
+  const mode = body.liked === true ? 'on' : body.liked === false ? 'off' : 'toggle';
+  const res = await q(LIKE_SQL, [user.id, Number(req.params.id), mode]);
+  const r = res.rows[0];
+  if (!r.found) return bad(reply, 404, 'Ovaj oglas ne postoji ili je obrisan.');
+  return { liked: r.liked, likes: r.likes };
 });
 
-// Pregled oglasa: broji se najviše jednom na sat po adresi, a vlasnikovi pregledi se ne broje.
-app.post('/api/listings/:id/view', async (req) => {
-  if (!isId(req.params.id) || limited(`view:${req.ip}:${req.params.id}`, 1, 60 * MIN)) return { ok: true };
+// Pregledi: jedan po oglasu, po gledaocu (prijavljeni korisnik ili uređaj), po danu.
+// Vlasnikovi pregledi se ne broje. Jedan upit: upis u listing_views i povećanje views za nove redove.
+async function countViews(req, reply, ids) {
   const user = await currentUser(req);
+  const viewer = user ? `u${user.id}` : `d${deviceId(req, reply)}`;
+  if (await limited(`views:${viewer}`, 30, MIN)) return bad(reply, 429, 'Previše zahtjeva. Sačekaj minut.');
+  if (ids.length === 0) return { ok: true };
   await q(
-    'update listings set views = views + 1 where id = $1 and deleted_at is null and user_id <> $2',
-    [Number(req.params.id), user ? user.id : 0],
+    `with novi as (
+       insert into listing_views(listing_id, viewer)
+       select l.id, $2 from listings l
+        where l.id = any($1::int[]) and l.deleted_at is null and l.user_id <> $3
+       on conflict do nothing
+       returning listing_id
+     )
+     update listings l set views = l.views + n.broj
+       from (select listing_id, count(*)::int as broj from novi group by listing_id) n
+      where l.id = n.listing_id`,
+    [ids, viewer, user ? user.id : 0],
   );
   return { ok: true };
+}
+
+app.post('/api/views', async (req, reply) => {
+  const raw = (req.body || {}).ids;
+  if (!Array.isArray(raw) || raw.length > 50 || !raw.every((v) => Number.isInteger(v) && v > 0 && v < 2 ** 31)) {
+    return bad(reply, 400, 'Pošalji spisak oglasa kao {"ids": [1, 2, 3]}, najviše 50.');
+  }
+  return countViews(req, reply, [...new Set(raw)]);
+});
+
+app.post('/api/listings/:id/view', async (req, reply) => {
+  if (!isId(req.params.id)) return { ok: true };
+  return countViews(req, reply, [Number(req.params.id)]);
 });
 
 /* ---------- poruke ---------- */
@@ -658,7 +870,7 @@ app.post('/api/conversations/:id/messages', async (req, reply) => {
   const user = await currentUser(req);
   if (!user) return bad(reply, 401, 'Prijavi se da pošalješ poruku.');
   if (!user.email_verified_at) return bad(reply, 403, 'Potvrdi email da bi slao poruke. Link ti je stigao na email, a novi tražiš u profilu.');
-  if (limited(`msg:${user.id}`, 30, MIN)) return bad(reply, 429, 'Šalješ previše poruka. Sačekaj minut.');
+  if (await limited(`msg:${user.id}`, 30, MIN)) return bad(reply, 429, 'Šalješ previše poruka. Sačekaj minut.');
   const conv = await myConversation(user.id, req.params.id);
   if (!conv) return bad(reply, 404, 'Ovaj razgovor ne postoji.');
   const otherId = conv.customer_id === user.id ? conv.shop_id : conv.customer_id;
@@ -698,7 +910,7 @@ app.get('/api/report-reasons', async () => ({ razlozi: REPORT_REASONS }));
 app.post('/api/reports', async (req, reply) => {
   const user = await currentUser(req);
   if (!user) return bad(reply, 401, 'Prijavi se da prijaviš sadržaj.');
-  if (limited(`report:${user.id}`, 20, 60 * MIN)) return bad(reply, 429, 'Previše prijava. Pokušaj kasnije.');
+  if (await limited(`report:${user.id}`, 20, 60 * MIN)) return bad(reply, 429, 'Previše prijava. Pokušaj kasnije.');
   const body = req.body || {};
   const reason = REPORT_REASONS.includes(body.reason) ? body.reason : 'Ostalo';
   if (isId(body.listingId)) {
@@ -816,6 +1028,7 @@ app.post('/api/admin/users/:id/suspend', async (req, reply) => {
   );
   if (res.rowCount === 0) return bad(reply, 404, 'Ovaj nalog ne postoji.');
   if (suspended) await q('delete from sessions where user_id = $1', [id]);
+  forgetUser(id);
   return { ok: true, suspended };
 });
 
@@ -837,8 +1050,12 @@ async function sendToBunny(listingId) {
     const l = res.rows[0];
     if (!l) return;
     const guid = await uploadToBunny(path.join(UPLOADS_DIR, l.video_path), l.title);
-    const upd = await q('update listings set bunny_guid = $1 where id = $2 and deleted_at is null returning id', [guid, l.id]);
-    if (upd.rowCount === 0) await deleteFromBunny(guid).catch(() => {}); // oglas je obrisan dok se slao
+    // `bunny_guid is null`: s više procesa isti snimak može izuzetno poslati i drugi proces; višak se briše.
+    const upd = await q(
+      'update listings set bunny_guid = $1 where id = $2 and deleted_at is null and bunny_guid is null returning id',
+      [guid, l.id],
+    );
+    if (upd.rowCount === 0) await deleteFromBunny(guid).catch(() => {}); // oglas je obrisan ili već poslan
   } catch (err) {
     app.log.warn(err, `Slanje snimka oglasa ${listingId} na Bunny nije uspjelo, pokušaću ponovo`);
   } finally {
@@ -861,12 +1078,13 @@ async function checkVideos() {
     await q('update listings set video_path = null where id = $1', [l.id]);
   }
   const pending = await q(
-    `select id, bunny_guid, video_path from listings
+    `select id, bunny_guid, video_path, created_at < now() - interval '10 minutes' as stale from listings
       where video_provider = 'bunny' and video_status = 'processing' and deleted_at is null
       order by id limit 20`,
   );
   for (const l of pending.rows) {
-    if (!l.bunny_guid) { sendToBunny(l.id).catch(() => {}); continue; }
+    // Svjež oglas šalje proces koji ga je primio; ovdje se ponovo šalju samo oni kojima to nije uspjelo.
+    if (!l.bunny_guid) { if (l.stale) sendToBunny(l.id).catch(() => {}); continue; }
     try {
       const st = await bunnyState(l.bunny_guid);
       if (st.state === 'ready') {
@@ -955,26 +1173,48 @@ app.setErrorHandler((err, req, reply) => {
 
 app.setNotFoundHandler((req, reply) => {
   if (req.url.startsWith('/api/') || req.url.startsWith('/media/')) return bad(reply, 404, 'Ne postoji.');
-  return reply.sendFile('index.html');
+  return sendIndex(reply);
 });
 
-await migrate(app.log);
-await q('delete from sessions where expires_at < now()');
-await q('delete from email_tokens where expires_at < now()');
+/* ---------- čišćenje ---------- */
+
+// Istekle sesije i tokeni, stara ograničenja i pregledi stariji od 30 dana (u serijama, da ne zaključa tabelu).
+async function cleanup() {
+  await q('delete from sessions where expires_at < now()');
+  await q('delete from email_tokens where expires_at < now()');
+  await q("delete from rate_limits where window_start < now() - interval '2 hours'");
+  for (let k = 0; k < 20; k += 1) {
+    const res = await q(
+      `delete from listing_views where ctid in (
+         select ctid from listing_views where day < current_date - 30 limit 5000)`,
+    );
+    if (res.rowCount < 5000) break;
+  }
+}
+
+/* ---------- start ---------- */
+
+// S više procesa (src/index.js) migracije pokreće primarni proces (KOMODO_MIGRATE=0 u radnicima),
+// a pozadinske poslove samo jedan radnik (KOMODO_JOBS=1). `npm run dev` pokreće sve u jednom procesu.
+const JOBS = process.env.KOMODO_JOBS !== '0';
+if (process.env.KOMODO_MIGRATE !== '0') await migrate(app.log);
 await app.listen({ port: PORT, host: HOST });
 
-app.log.info(bunnyOn ? 'Snimci idu na Bunny Stream.' : 'Snimci se čuvaju lokalno (Bunny nije podešen).');
-const videoTimer = setInterval(() => {
-  checkVideos().catch((err) => app.log.error(err, 'Provjera snimaka nije uspjela'));
-}, 20 * 1000);
-const notifyTimer = setInterval(() => {
-  notifyUnread().catch((err) => app.log.error(err, 'Slanje emaila o nepročitanim porukama nije uspjelo'));
-}, MIN);
+const timers = [];
+if (JOBS) {
+  app.log.info(bunnyOn ? 'Snimci idu na Bunny Stream.' : 'Snimci se čuvaju lokalno (Bunny nije podešen).');
+  const every = (ms, fn, text) => {
+    timers.push(setInterval(() => { fn().catch((err) => app.log.error(err, text)); }, ms));
+  };
+  cleanup().catch((err) => app.log.error(err, 'Čišćenje nije uspjelo'));
+  every(20 * 1000, checkVideos, 'Provjera snimaka nije uspjela');
+  every(MIN, notifyUnread, 'Slanje emaila o nepročitanim porukama nije uspjelo');
+  every(10 * MIN, cleanup, 'Čišćenje nije uspjelo');
+}
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
-    clearInterval(notifyTimer);
-    clearInterval(videoTimer);
+    for (const t of timers) clearInterval(t);
     await app.close();
     await pool.end();
     process.exit(0);
