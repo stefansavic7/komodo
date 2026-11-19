@@ -28,9 +28,11 @@ prijave, otvaranje butika, gašenje naloga; potvrda emaila, zaboravljena lozinka
 učestalosti (prijava, registracija, poruke, prijave); email butiku za poruku nepročitanu 15 minuta; logo i ikonice;
 nacrti uslova korištenja i politike privatnosti (`web/uslovi.html`, `web/privatnost.html`).
 
+Migracije 009 (v1 šema) i 010 (sigurnost) su dodane; sljedeća migracija ima broj 011. Produkcija (`NODE_ENV=production`) traži `SMTP_URL`, `COOKIE_SECRET` i `APP_URL`, bez prva dva API ne starta.
+
 Otvoreno:
 - Uslovi i privatnost su nacrti: upisati operatera i kontakt, dati pravniku.
-- Skaliranje (19.11.): `docs/SKALIRANJE.md`. API radi u više procesa (`api/src/index.js`, `WORKERS`), ograničenja i pregledi su u bazi (migracija 008), `likes_count` u `listings`, keš prijava 15 s i javnog feeda 5 s, index.html dobija oznaku verzije za app.js/style.css. Klijent ~7 zahtjeva/min po korisniku. Izmjereno na 2 jezgra: 10.000 korisnika bez grešaka (p95 < 25 ms), granica ~2.500 zahtjeva/s. Za lansiranje CCX23, pred reklame CCX33 (`docs/SERVER.md`, odjeljak 8).
+- Skaliranje (19.11.): `docs/SKALIRANJE.md`. API radi u više procesa (`api/src/index.js`, `WORKERS`), ograničenja i pregledi su u bazi (migracija 008), `likes_count` u `listings`, keš prijava 15 s i javnog feeda 5 s, index.html dobija oznaku verzije za web/js/*.js i style.css; struktura koda: `docs/ARHITEKTURA.md`. Klijent ~7 zahtjeva/min po korisniku. Izmjereno na 2 jezgra: 10.000 korisnika bez grešaka (p95 < 25 ms), granica ~2.500 zahtjeva/s. Za lansiranje CCX23, pred reklame CCX33 (`docs/SERVER.md`, odjeljak 8).
 - Etapa 2 (kod gotov): snimci na Bunny Stream (`api/src/video.js`). Snimak ide na disk, pa u pozadini na Bunny;
   dok se obrađuje svi ga gledaju s našeg servera, a lokalni fajl se briše 30 min poslije završetka (`ready_at`). Puštanje: MP4 `play_<rez>.mp4`, najveća od 1080p/720p/360p/240p (Bunny biblioteka 808418, Frankfurt, rezolucije 240/360/720/1080), sličica `thumbnail.jpg`.
   Isprobano samo s lažnim Bunny serverom; sa pravim nalogom provjeriti nazive polja (`status`,

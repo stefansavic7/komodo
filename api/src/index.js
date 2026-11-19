@@ -13,6 +13,17 @@ const WORKERS = Math.max(1, Number(process.env.WORKERS) || os.availableParalleli
 const log = (text) => console.log(JSON.stringify({ level: 30, time: Date.now(), pid: process.pid, msg: text }));
 const logError = (text) => console.error(JSON.stringify({ level: 50, time: Date.now(), pid: process.pid, msg: text }));
 
+// Produkcija bez SMTP_URL ili COOKIE_SECRET: jasna greška odmah, a ne radnici koji padaju u krug.
+{
+  const { provjeriOkolinu } = await import('./provjera.js');
+  try {
+    provjeriOkolinu(() => {});
+  } catch (err) {
+    logError(err.message);
+    process.exit(1);
+  }
+}
+
 // Migracije jednom, prije radnika.
 {
   const { migrate, pool } = await import('./db.js');

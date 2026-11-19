@@ -87,7 +87,11 @@ U `api/.env` stavi `HOST=0.0.0.0`, pokreni ponovo i na telefonu otvori `http://I
 | Snimci u razvoju | `api/uploads/` (ne commituje se) |
 | Tajne | `api/.env` (ne commituje se, ne šalje u chat) |
 | Šema baze | `api/migrations/*.sql`, primjenjuju se po abecedi pri startu |
-| Kategorije | `CATEGORIES` u `api/src/server.js` i `CATS` u `web/app.js` (moraju biti iste) |
+| Kategorije | `CATEGORIES` u `api/src/app.js` i `CATS` u `web/js/osnova.js` (moraju biti iste) |
+| API | `api/src/server.js` (ulaz), `api/src/app.js` (zajedničko), `api/src/rute/*.js` (rute), `api/src/poslovi.js` (pozadinski poslovi) |
+| Web | `web/index.html`, `web/style.css`, `web/js/*.js` (učitavaju se redom iz `index.html`) |
+
+Detaljno (kako dodati rutu ili ekran): `docs/ARHITEKTURA.md`.
 
 ## Mobilna aplikacija (Expo)
 

@@ -1,0 +1,105 @@
+# Komodo CI: provjera sintakse, API testovi, test istovremenosti i e2e u pregledniku.
+# Bez tajni: baza je privremeni Postgres servis, email i Bunny nisu podešeni.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+
+jobs:
+  api:
+    name: Sintaksa i API testovi
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - name: npm ci (api)
+        working-directory: api
+        run: npm ci
+      - name: node --check svih .js/.mjs
+        run: |
+          git ls-files '*.js' '*.mjs' '*.cjs' | grep -v node_modules | while read -r f; do
+            node --check "$f" || { echo "Sintaksna greška: $f"; exit 1; }
+          done
+      - name: API testovi (api/test)
+        working-directory: api
+        run: npm test
+      - name: Test istovremenosti
+        working-directory: api
+        run: npm run test:istovremenost
+
+  e2e:
+    name: E2E u pregledniku (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            tests/package-lock.json
+      - name: npm ci (api)
+        working-directory: api
+        run: npm ci
+      - name: npm ci (tests)
+        working-directory: tests
+        run: npm ci
+      - name: Chromium za Playwright
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+      - name: E2E testovi
+        working-directory: tests
+        env:
+          CI: '1'
+        run: npx playwright test
+      - name: Izvještaj i snimci neuspjelih testova
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-izvjestaj
+          path: |
+            tests/playwright-report/
+            tests/test-results/
+          retention-days: 7

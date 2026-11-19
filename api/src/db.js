@@ -8,7 +8,21 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Veza po procesu: s više procesa (src/index.js) ukupno ih je WORKERS × PG_POOL.
-export const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: Number(process.env.PG_POOL) || 10 });
+// Vremenska zona sesije: current_date (listing_views.day, statistika) je lokalni dan u Banjoj Luci, i kad
+// server baze nije podešen tako (laptop). PG_TIMEZONE ga mijenja.
+export const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: Number(process.env.PG_POOL) || 10,
+  // Baza ne prima vezu: zahtjev dobija grešku za 5 s umjesto da čeka zauvijek (/api/health tada vraća 503).
+  connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 5000,
+  options: `-c timezone=${process.env.PG_TIMEZONE || 'Europe/Sarajevo'}`,
+});
+
+// Veza u mirovanju koju baza prekine (restart, administrator) javlja grešku na poolu. Bez ovog rukovaoca
+// Node to smatra neobrađenom greškom i proces pada; ovako se veza odbaci, a sljedeći upit otvori novu.
+pool.on('error', (err) => {
+  console.error(JSON.stringify({ level: 50, time: Date.now(), pid: process.pid, msg: `Veza s bazom je prekinuta: ${err.message}` }));
+});
 
 export function q(text, params) {
   return pool.query(text, params);

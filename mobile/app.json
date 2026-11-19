@@ -8,31 +8,67 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#16121a",
     "scheme": "komodo",
-    "splash": {
-      "image": "./assets/ikona.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#16121a"
-    },
     "ios": {
       "bundleIdentifier": "ba.komodo.app",
+      "buildNumber": "1",
       "supportsTablet": false,
+      "associatedDomains": ["applinks:komodo.ba"],
       "infoPlist": {
-        "NSCameraUsageDescription": "Kamera ti treba da snimiš video proizvoda za oglas.",
-        "NSMicrophoneUsageDescription": "Mikrofon snima zvuk uz video proizvoda.",
-        "NSPhotoLibraryUsageDescription": "Galerija ti treba da izabereš video proizvoda za oglas.",
+        "NSCameraUsageDescription": "Komodo koristi kameru kad butik snima video proizvoda za oglas.",
+        "NSMicrophoneUsageDescription": "Komodo koristi mikrofon da snimi zvuk uz video proizvoda za oglas.",
+        "NSPhotoLibraryUsageDescription": "Komodo otvara galeriju kad butik bira video proizvoda za oglas.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "ba.komodo.app",
+      "versionCode": 1,
+      "allowBackup": false,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/ikona.png",
+        "foregroundImage": "./assets/ikona-android.png",
         "backgroundColor": "#16121a"
       },
-      "permissions": ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"]
+      "permissions": [],
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "komodo.ba", "path": "/" },
+            { "scheme": "https", "host": "komodo.ba", "pathPrefix": "/api/auth/" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "plugins": [
-      ["expo-notifications", { "color": "#ff6a4d" }]
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#16121a"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/obavjestenje.png",
+          "color": "#ff6a4d",
+          "defaultChannel": "poruke"
+        }
+      ]
     ],
     "extra": {}
   }

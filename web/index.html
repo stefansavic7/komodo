@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#16121a">
 <title>Komodo</title>
 <meta name="description" content="Snimi i prodaj. Video oglasi butika iz tvog grada.">
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/fonts/fonts.css">
 <link rel="icon" href="/ikona.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/ikona-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -55,15 +55,22 @@
       <p id="authLead">Prijavi se da objaviš oglas ili označiš šta ti se sviđa.</p>
       <div class="field" id="authShopField" hidden>
         <label for="aShop">Ime</label>
-        <input id="aShop" type="text" maxlength="40" autocomplete="name">
+        <input id="aShop" type="text" maxlength="40" autocomplete="name" aria-describedby="aShopErr">
+        <p class="field-err" id="aShopErr" role="alert"></p>
       </div>
       <div class="field">
         <label for="aEmail">Email</label>
-        <input id="aEmail" type="email" maxlength="200" autocomplete="email">
+        <input id="aEmail" type="email" maxlength="200" autocomplete="email" aria-describedby="aEmailErr">
+        <p class="field-err" id="aEmailErr" role="alert"></p>
       </div>
       <div class="field">
         <label for="aPass">Lozinka</label>
-        <input id="aPass" type="password" maxlength="200" autocomplete="current-password">
+        <div class="pass-wrap">
+          <input id="aPass" type="password" maxlength="200" autocomplete="current-password" aria-describedby="aPassHint aPassErr">
+          <button type="button" class="pass-eye" id="aPassEye" aria-controls="aPass" aria-pressed="false">Prikaži</button>
+        </div>
+        <p class="hint" id="aPassHint" hidden>Najmanje 8 znakova.</p>
+        <p class="field-err" id="aPassErr" role="alert"></p>
       </div>
       <p class="err" id="authErr" role="alert"></p>
       <button type="submit" class="btn btn-main btn-wide" id="authSubmit">Prijavi se</button>
@@ -97,7 +104,7 @@
 
     <div id="me" hidden>
       <div class="note" id="verifyBox" hidden>
-        <p>Email još nije potvrđen. Dok ga ne potvrdiš, ne možeš slati poruke.</p>
+        <p id="verifyText">Skoro gotovo! Poslali smo link na vaš email. Potvrdi ga da bi mogao pisati buticima.</p>
         <button type="button" class="link" id="verifyResend">Pošalji link ponovo</button>
       </div>
       <button type="button" class="btn" id="adminOpen" hidden>Administracija</button>
@@ -107,8 +114,8 @@
           <div class="p-name">
             <span class="p-handle" id="pHandle"></span>
             <dl class="stats">
-              <div><dt>oglasa</dt><dd id="pCount">0</dd></div>
-              <div><dt>sviđanja</dt><dd id="pLikes">0</dd></div>
+              <div><dt id="pCountLbl">oglasa</dt><dd id="pCount">0</dd></div>
+              <div id="pLikesBox"><dt>sviđanja</dt><dd id="pLikes">0</dd></div>
             </dl>
           </div>
         </div>
@@ -280,6 +287,7 @@
         <select id="fCat"></select>
       </div>
       <div class="progress" id="progress" hidden><span id="progressBar"></span></div>
+      <p class="hint" id="postWarn">Ne zatvaraj aplikaciju dok se video šalje.</p>
       <p class="err" id="postErr" role="alert"></p>
       <div class="btns">
         <button type="button" class="btn" id="postCancel">Odustani</button>
@@ -345,8 +353,28 @@
     </div>
   </div>
 
+  <div class="gate" id="updateGate" role="alertdialog" aria-modal="true" aria-labelledby="gateTitle" aria-describedby="gateText" hidden>
+    <div class="gate-box">
+      <img class="mark" src="/ikona.svg" alt="" width="56" height="56">
+      <h2 id="gateTitle">Nova verzija Komoda je dostupna</h2>
+      <p id="gateText">Ova verzija više ne radi. Nadogradi aplikaciju da nastaviš.</p>
+      <button type="button" class="btn btn-main btn-wide" id="gateGo">Nadogradi</button>
+    </div>
+  </div>
+
   <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
 </div>
-<script src="/app.js"></script>
+<!-- Redoslijed je bitan (globalni opseg, bez gradnje): docs/ARHITEKTURA.md. Server dodaje ?v= svakom lokalnom skriptu. -->
+<script src="/js/osnova.js"></script>
+<script src="/js/omotac.js"></script>
+<script src="/js/feed.js"></script>
+<script src="/js/objava.js"></script>
+<script src="/js/butik.js"></script>
+<script src="/js/prijava.js"></script>
+<script src="/js/profil.js"></script>
+<script src="/js/prikazi.js"></script>
+<script src="/js/poruke.js"></script>
+<script src="/js/admin.js"></script>
+<script src="/js/start.js"></script>
 </body>
 </html>

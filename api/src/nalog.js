@@ -4,18 +4,50 @@ import { q } from './db.js';
 
 const scryptAsync = promisify(scrypt);
 
+// scrypt (S-18): čitaju se oba zapisa — stari „so:hash” (N=2^14, zadano u Node-u) i novi
+// „s2:N:r:p:so:hash”. Novi (N=2^15) se PIŠE tek uz KOMODO_SCRYPT_V2=1: verzija API-ja prije ove ne zna
+// pročitati novi zapis, pa bi poslije povratka na nju ti korisnici ostali bez prijave. Uključiti kad se na
+// stariju verziju više ne vraća (sljedeće izdanje); tada se stari zapisi prepisuju pri prijavi (needsRehash).
+const V2 = process.env.KOMODO_SCRYPT_V2 === '1';
+const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+
 export async function hashPassword(password) {
   const salt = randomBytes(16);
-  const hash = await scryptAsync(password, salt, 64);
-  return `${salt.toString('hex')}:${hash.toString('hex')}`;
+  if (!V2) return `${salt.toString('hex')}:${(await scryptAsync(password, salt, 64)).toString('hex')}`;
+  const hash = await scryptAsync(password, salt, 64, SCRYPT);
+  return `s2:${SCRYPT.N}:${SCRYPT.r}:${SCRYPT.p}:${salt.toString('hex')}:${hash.toString('hex')}`;
 }
 
 export async function checkPassword(password, stored) {
-  const [saltHex, hashHex] = String(stored).split(':');
+  const parts = String(stored).split(':');
+  let opts = {};
+  let saltHex;
+  let hashHex;
+  if (parts[0] === 's2' && parts.length === 6) {
+    const [N, r, p] = parts.slice(1, 4).map(Number);
+    if (!(N >= 2 ** 14 && N <= 2 ** 20 && r >= 1 && r <= 16 && p >= 1 && p <= 4)) return false;
+    opts = { N, r, p, maxmem: 256 * N * r };
+    [saltHex, hashHex] = parts.slice(4);
+  } else if (parts.length === 2) {
+    [saltHex, hashHex] = parts;
+  } else {
+    return false;
+  }
   if (!saltHex || !hashHex) return false;
   const expected = Buffer.from(hashHex, 'hex');
-  const actual = await scryptAsync(password, Buffer.from(saltHex, 'hex'), expected.length);
+  const actual = await scryptAsync(password, Buffer.from(saltHex, 'hex'), expected.length, opts);
   return timingSafeEqual(expected, actual);
+}
+
+export function needsRehash(stored) {
+  return V2 && !String(stored).startsWith(`s2:${SCRYPT.N}:${SCRYPT.r}:${SCRYPT.p}:`);
+}
+
+// Jednoredno polje (ime, naziv butika, naslov oglasa, telefon): bez kontrolnih znakova, novih redova,
+// znakova nulte širine i znakova za smjer teksta (S-13). Poruke i dalje idu kroz clean() (novi red je dozvoljen).
+const NEVIDLJIVI = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+export function cleanLine(value, max) {
+  return String(value ?? '').replace(NEVIDLJIVI, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
 export function slug(text) {
@@ -68,10 +100,10 @@ export async function insertUser(name, insert) {
 
 // Otvara nalog butika i vraća privremenu lozinku. Baca grešku s porukom ako ne može.
 export async function createShop({ name, email, phone = '', city = 'Banja Luka' }) {
-  name = String(name || '').trim().slice(0, 40);
+  name = cleanLine(name, 40);
   email = String(email || '').trim().toLowerCase();
-  phone = String(phone || '').trim().slice(0, 30);
-  city = String(city || 'Banja Luka').trim().slice(0, 40) || 'Banja Luka';
+  phone = cleanLine(phone, 30);
+  city = cleanLine(city || 'Banja Luka', 40) || 'Banja Luka';
   if (name.length < 2) throw new Error('Upiši naziv butika.');
   if (!validEmail(email)) throw new Error('Upiši ispravnu email adresu butika.');
   const exists = await q('select role from users where email = $1', [email]);

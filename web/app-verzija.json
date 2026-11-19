@@ -1,0 +1,4 @@
+{
+  "ios": { "min": "1.0.0", "url": "https://apps.apple.com/app/id<APP_STORE_ID>" },
+  "android": { "min": "1.0.0", "url": "https://play.google.com/store/apps/details?id=ba.komodo.app" }
+}

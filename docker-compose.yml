@@ -24,17 +24,26 @@ services:
       - max_wal_size=${DB_MAX_WAL_SIZE:-1GB}
       - -c
       - random_page_cost=1.1   # NVMe disk: nasumično čitanje je skoro jednako sekvencijalnom
+      - -c
+      - timezone=Europe/Sarajevo   # current_date i statistika po lokalnom danu (docs/SPEC-V1.md); timestamptz se ne mijenja
     environment:
-      POSTGRES_USER: komodo   # službena slika pravi ovog korisnika kao superusera (treba za `create extension pg_trgm`)
+      # Superuser (pravi ga službena slika): samo za psql, kopije baze i server/db-init. API radi kao komodo_app.
+      POSTGRES_USER: komodo
       POSTGRES_DB: komodo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Upiši POSTGRES_PASSWORD u .env}
+      # Lozinka korisnika komodo_app (bez superusera, nalaz S-17); koristi je server/db-init/10-komodo-app.sh.
+      KOMODO_APP_PASSWORD: ${KOMODO_APP_PASSWORD:?Upiši KOMODO_APP_PASSWORD u .env (docs/SERVER.md, odjeljak 10)}
     volumes:
       - db-data:/var/lib/postgresql/data
+      # Pokreće se samo pri prvom pokretanju s praznom bazom: pravi korisnika komodo_app.
+      - ./server/db-init:/docker-entrypoint-initdb.d:ro
     # /dev/shm: Postgres ga koristi za dijeljenu memoriju upita (paralelni upiti). Dockerov zadani 64 MB je premalo
     # za veće servere ("could not resize shared memory segment"). Troši se samo ono što se stvarno koristi.
     shm_size: ${DB_SHM_SIZE:-128m}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U komodo -d komodo"]
+      # Preko TCP-a: dok slika pri prvom pokretanju izvršava db-init, baza sluša samo na socketu,
+      # pa API ne kreće prerano.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U komodo -d komodo"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -54,7 +63,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3002
       UPLOADS_DIR: /data/uploads
-      DATABASE_URL: postgres://komodo:${POSTGRES_PASSWORD}@db:5432/komodo
+      DATABASE_URL: postgres://komodo_app:${KOMODO_APP_PASSWORD}@db:5432/komodo
       # Uvijek zadato izričito: unutar kontejnera Node vidi sva jezgra servera, ne ograničenje kontejnera.
       WORKERS: ${WORKERS:-2}
       PG_POOL: ${PG_POOL:-10}
@@ -63,8 +72,17 @@ services:
       # Heap po procesu: WORKERS × max-old-space-size + ~50 MB ostatka po procesu (i glavnom) mora stati u API_MEM.
       # Zadano: 2 × 160 + 3 × 50 = 470 MB < 512 MB.
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=160}
+    # Snimci dok se obrađuju: direktorij na hostu (ne Docker volumen), da ih Nginx na hostu služi direktno
+    # (server/nginx-komodo.conf, location /media/). Vlasnik mora biti uid 1000 (korisnik node u slici):
+    #   sudo mkdir -p /srv/komodo/uploads && sudo chown 1000:1000 /srv/komodo/uploads
+    # create_host_path: false — ako direktorij ne postoji, pokretanje javi grešku umjesto da ga Docker
+    # napravi kao root (tada API ne bi mogao upisati snimak). docs/SERVER.md, 2.6.
     volumes:
-      - uploads:/data/uploads
+      - type: bind
+        source: /srv/komodo/uploads
+        target: /data/uploads
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:3002:3002"   # samo Nginx na istom serveru vidi API
     depends_on:
@@ -77,4 +95,3 @@ services:
 
 volumes:
   db-data:
-  uploads:

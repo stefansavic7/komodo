@@ -4,10 +4,12 @@
     "development": {
       "developmentClient": false,
       "distribution": "internal",
+      "android": { "buildType": "apk" },
       "env": { "EXPO_PUBLIC_APP_URL": "http://192.168.1.15:3002" }
     },
     "preview": {
       "distribution": "internal",
+      "android": { "buildType": "apk" },
       "env": { "EXPO_PUBLIC_APP_URL": "https://komodo.ba" }
     },
     "production": {
@@ -15,5 +17,9 @@
       "env": { "EXPO_PUBLIC_APP_URL": "https://komodo.ba" }
     }
   },
-  "submit": { "production": {} }
+  "submit": {
+    "production": {
+      "android": { "track": "internal", "releaseStatus": "draft" }
+    }
+  }
 }

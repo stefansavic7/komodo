@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.ba.komodo.app"],
+        "components": [
+          { "/": "/", "comment": "feed, oglas ?o=, butik ?b=, razgovor ?poruke=, nova lozinka #lozinka=" },
+          { "/": "/api/auth/*", "comment": "potvrda emaila" }
+        ]
+      }
+    ]
+  }
+}

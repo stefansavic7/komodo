@@ -9,7 +9,11 @@
   "scripts": {
     "dev": "node --watch --env-file=.env src/server.js",
     "start": "node --env-file=.env src/server.js",
-    "start:cluster": "node --env-file=.env src/index.js"
+    "start:cluster": "node --env-file=.env src/index.js",
+    "test": "node --test --test-concurrency=4 \"test/*.test.mjs\"",
+    "test:istovremenost": "node test/opterecenje/istovremenost.mjs",
+    "test:opterecenje": "node test/opterecenje/opterecenje.mjs",
+    "test:napuni-bazu": "node test/opterecenje/napuni-bazu.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",
