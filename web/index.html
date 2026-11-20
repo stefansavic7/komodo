@@ -11,17 +11,23 @@
 <link rel="apple-touch-icon" href="/ikona-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/butik.css">
+<link rel="stylesheet" href="/statistika.css">
 </head>
 <body>
 <div class="app">
 
   <header class="topbar" id="topbar">
     <div class="brand" id="brand">
-      <img class="mark" src="/ikona.svg" alt="" width="30" height="30">
-      <span class="wordmark">komodo<i>.</i></span>
-      <span class="city">Banja Luka</span>
+      <img class="mark" src="/ikona.svg" alt="Komodo" width="30" height="30">
+      <nav class="ftabs" id="ftabs" aria-label="Feed">
+        <button type="button" class="ftab" data-k="zatebe" aria-pressed="true">Za tebe</button>
+        <button type="button" class="ftab" data-k="novo" aria-pressed="false">Novo</button>
+        <button type="button" class="ftab" data-k="praceni" aria-pressed="false">Praćeni</button>
+      </nav>
       <button type="button" class="icon-btn" id="searchToggle" aria-label="Pretraga" aria-expanded="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <i class="dot" id="searchDot" hidden></i>
       </button>
     </div>
     <form class="search" id="searchForm" novalidate hidden>
@@ -35,6 +41,12 @@
         <button type="submit" class="btn btn-main">Traži</button>
         <button type="button" class="btn" id="searchClear">Poništi</button>
       </div>
+      <div class="vel-filter" role="group" aria-labelledby="velLbl">
+        <span class="lbl" id="velLbl">Veličina</span>
+        <div class="sizes sizes-row" id="qSizesOdjeca"></div>
+        <div class="sizes sizes-row sizes-scroll" id="qSizesObuca"></div>
+        <button type="button" class="link" id="sizesClear">Poništi veličine</button>
+      </div>
     </form>
     <div class="shopbar" id="shopbar" hidden>
       <button type="button" class="back" id="back" aria-label="Nazad na sve oglase">
@@ -47,6 +59,10 @@
   </header>
 
   <main class="feed" id="feed" aria-label="Oglasi"></main>
+  <div class="uputa" id="uputa" role="status" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5m0 0l-6 6m6-6 6 6"/></svg>
+    <span>Prevuci gore za sljedeći proizvod</span>
+  </div>
 
   <section class="profile" id="profile" aria-label="Profil" hidden>
 
@@ -141,7 +157,7 @@
           <button type="button" class="btn" id="logout">Odjavi se</button>
         </div>
       </form>
-      <label class="check" for="pushToggle" id="pushRow" hidden><input id="pushToggle" type="checkbox"> Obavještenja o novim porukama</label>
+      <label class="check" for="pushToggle" id="pushRow" hidden><input id="pushToggle" type="checkbox"> Obavještenja o porukama i sniženjima</label>
       <form class="shop-form" id="passForm" novalidate>
         <button type="button" class="link" id="passToggle">Promijeni lozinku</button>
         <div class="shop-form" id="passFields" hidden>
@@ -286,6 +302,10 @@
         <label for="fCat">Kategorija</label>
         <select id="fCat"></select>
       </div>
+      <div class="field" id="fSizesBox" hidden>
+        <span class="lbl" id="fSizesLbl">Veličine (izaberi sve koje imaš)</span>
+        <div class="sizes" id="fSizes" role="group" aria-labelledby="fSizesLbl"></div>
+      </div>
       <div class="progress" id="progress" hidden><span id="progressBar"></span></div>
       <p class="hint" id="postWarn">Ne zatvaraj aplikaciju dok se video šalje.</p>
       <p class="err" id="postErr" role="alert"></p>
@@ -300,8 +320,13 @@
     <form class="panel" id="editForm" novalidate aria-label="Izmjena oglasa">
       <h2>Izmijeni oglas</h2>
       <div class="field"><label for="eTitle">Naziv</label><input id="eTitle" type="text" maxlength="60" autocomplete="off"></div>
-      <div class="field"><label for="ePrice">Cijena (KM)</label><input id="ePrice" type="text" inputmode="decimal" maxlength="10" autocomplete="off"></div>
+      <div class="field"><label for="ePrice">Cijena (KM)</label><input id="ePrice" type="text" inputmode="decimal" maxlength="10" autocomplete="off">
+        <p class="hint" id="eDrop" hidden></p></div>
       <div class="field"><label for="eCat">Kategorija</label><select id="eCat"></select></div>
+      <div class="field" id="eSizesBox" hidden>
+        <span class="lbl" id="eSizesLbl">Veličine (izaberi sve koje imaš)</span>
+        <div class="sizes" id="eSizes" role="group" aria-labelledby="eSizesLbl"></div>
+      </div>
       <label class="check" for="eSold"><input id="eSold" type="checkbox"> Prodato</label>
       <p class="err" id="editErr" role="alert"></p>
       <div class="btns">
@@ -309,6 +334,16 @@
         <button type="submit" class="btn btn-main">Sačuvaj</button>
       </div>
     </form>
+  </div>
+
+  <div class="sheet" id="moreSheet" hidden>
+    <div class="panel more-menu" role="dialog" aria-label="Više">
+      <button type="button" class="btn btn-wide" data-more="edit">Izmijeni oglas</button>
+      <button type="button" class="btn btn-wide" data-more="sold" id="moreSold">Označi kao prodato</button>
+      <button type="button" class="btn btn-wide" data-more="stats" id="moreStats">Statistika</button>
+      <button type="button" class="btn btn-wide btn-danger" data-more="del">Obriši oglas</button>
+      <button type="button" class="btn btn-wide" data-more="close">Odustani</button>
+    </div>
   </div>
 
   <div class="sheet" id="reportSheet" hidden>
@@ -375,6 +410,7 @@
 <script src="/js/prikazi.js"></script>
 <script src="/js/poruke.js"></script>
 <script src="/js/admin.js"></script>
+<script src="/js/statistika.js"></script>
 <script src="/js/start.js"></script>
 </body>
 </html>

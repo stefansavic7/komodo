@@ -120,8 +120,12 @@ a kad hoću — samo najnovije ili samo butike koje pratim.
 - Početna kartica pri svakom otvaranju: „Za tebe”. Dodir na već aktivnu karticu = osvježi od početka (skrol na vrh).
 - Pretraga (tekst ili cijena) i pregled jednog butika: kartice se sakrivaju, rezultat je redom „Novo” (kao sada).
 - Kategorija i veličine važe u sve tri kartice.
-- Kad „Za tebe” vrati `kraj: true`, klijent ubaci karticu-razdjelnik „To je sve za sada u „Za tebe”. Slijede
-  najnoviji oglasi.” i nastavlja stranama „Novo” (`before=`), preskačući oglase koje je već prikazao.
+- Kad „Za tebe” vrati `kraj: true` **ili stranu bez ijednog novog oglasa** (svi već prikazani, poslije uklanjanja
+  duplikata — R2-01), klijent ubaci karticu-razdjelnik „To je sve za sada u „Za tebe”. Slijede najnoviji oglasi.” i
+  nastavlja stranama „Novo” (`before=`), preskačući oglase koje je već prikazao.
+- Zaštita od lanca praznih strana (R2-01): poslije strane bez novih oglasa sljedeća se traži najranije za 1 s; poslije
+  2 takve strane zaredom automatsko učitavanje staje i na kraju liste je dugme „Prikaži starije oglase” (dodir
+  nastavlja). Prelaz „Za tebe” → „Novo” se ne broji kao prazna strana.
 
 Prazna stanja:
 - „Za tebe” / „Novo” bez oglasa: postojeći tekstovi (+ U-13).
@@ -140,7 +144,7 @@ Prazna stanja:
 | `kartica` | `zatebe` \| `novo` \| `praceni` | zadano `zatebe`; drugo → 400 „Nepoznata kartica.” |
 | `category` | string | jedna iz `CATEGORIES`, inače se ignoriše (kao `/api/listings`) |
 | `sizes` | csv | ≤ 6 vrijednosti iz skupa F-03, nepoznate se ignorišu |
-| `izuzmi` | csv id-jeva | samo `zatebe`; ≤ 200 (višak: zadržati **zadnjih** 200), svaki `isId` |
+| `izuzmi` | csv id-jeva | samo `zatebe`; ≤ 400 (višak: zadržati **zadnjih** 400), svaki `isId` (R2-01) |
 | `before` | id | samo `novo` i `praceni` |
 
 Izlaz: `{ "oglasi": [ <oglas> ×≤20 ], "kraj": false }`. `<oglas>` = postojeći `publicListing` + polja iz F-03 i
@@ -154,7 +158,10 @@ F-07 (`sizes`, `oldPrice`). `kraj` samo za `zatebe`.
 
 #### Algoritam „Za tebe”
 
-**1. `base_score` (pozadinski posao, samo proces s `KOMODO_JOBS`, svakih 5 min, i jednom pri startu).**
+**1. `base_score` (pozadinski posao, samo proces s `KOMODO_JOBS`, svakih 5 min, i jednom pri startu).** Ocjena je
+u tabeli `listing_scores(listing_id, base_score > 0)` (migracija 012, R2-02): posao čita `listings` bez
+zaključavanja i piše samo tu tabelu (ocjena 0 = red se briše), pa se ne sudara sa sviđanjima i pregledima
+(`update listings set likes_count/views`). Kolona `listings.base_score` ostaje samo zbog povratka na stariju verziju.
 
 Jedna naredba nad oglasima zadnjih 30 dana i onima koji još imaju `base_score > 0`:
 
@@ -182,8 +189,8 @@ Upit ide preko `listings_fresh_idx` (created_at). Procjena: ≤ 10.000 redova, <
 **2. Kandidati (keš u procesu, zajednički za sve korisnike).** Ključ = `{category, sizes (sortirano)}`, TTL 60 s,
 najviše 100 ključeva (`boundedSet`), istovremeni zahtjevi čekaju isti upit.
 
-- `C` = do 200 oglasa: `LISTING_SELECT` bez `liked/mine` (+ `l.user_id`, `l.base_score`), `base_score > 0`,
-  filteri, `order by base_score desc limit 200` (indeksi `listings_score_idx`, `listings_cat_score_idx`).
+- `C` = do 200 oglasa: `LISTING_SELECT` bez `liked/mine` (+ `l.user_id`, `base_score` iz `listing_scores`),
+  `base_score > 0`, filteri, `order by base_score desc limit 200` (indeks `listing_scores_score_idx`).
 - `D` (otkrivanje) = do 100 oglasa: `created_at > now() − 72 h`, `views < 50`, `video_status='ready'`,
   filteri, `order by id desc limit 100`.
 
@@ -233,15 +240,18 @@ pravila raznolikosti: butik kandidata nije među zadnja 3 postavljena (najviše 
 **6. Izlaz.** `liked` iz `svidja`, `mine` = vlastit (uvijek false jer su izuzeti). Bez dodatnog upita.
 
 **Straničenje bez ponavljanja.** Klijent šalje `izuzmi` = id-jeve koje je prikazao u ovoj kartici, redom, najviše
-zadnjih 200 (URL ≤ ~2 KB, ispod Nginx granice od 8 KB). Starije koje ispadnu iz `izuzmi` do tada su poslane kao
-pregledi (svakih 30 s), pa dobijaju ×0,2. Klijent dodatno filtrira duplikate po id-ju. Osvježavanje (ponovni dodir
+zadnjih 400 (R2-01). To pokriva sve kandidate koje server može vratiti (C 200 + D 100 = 300) uz rezervu za smjenu
+kandidata (keš 60 s, ocjene 5 min), pa strana nikad ne sadrži izuzet oglas, a `kraj: true` dođe čim nema novih.
+Ranije granica 200 < 300 je vraćala već prikazane oglase i `kraj` nikad nije došao (petlja zahtjeva). Zapis ostaje csv
+u GET upitu: 400 id-jeva po 7 cifara ≈ 3,2 KB, ispod Nginx granice reda zahtjeva (8 KB); kompaktan zapis ili POST bi
+uštedio samo bajtove, a GET ostaje idempotentan i lak za praćenje. Klijent dodatno filtrira duplikate po id-ju. Osvježavanje (ponovni dodir
 kartice, povratak u aplikaciju poslije > 30 min) briše `izuzmi`.
 
 **Butik u feedu:** ne vidi svoje oglase u „Za tebe” (vidi ih u „Novo” i na profilu).
 
 #### Baza
 
-`listings.base_score`, `sold_at`, indeksi `listings_score_idx`, `listings_cat_score_idx`, `listings_fresh_idx`,
+`listing_scores` (migracija 012; ranije `listings.base_score` s indeksima `listings_score_idx`, `listings_cat_score_idx`), `sold_at`, `listings_fresh_idx`,
 tabele `follows`, `listing_contacts` (odjeljak 4). `PATCH /api/listings/:id` postavlja `sold_at`:
 `case when $sold and not sold then now() when not $sold then null else sold_at end`.
 
@@ -257,7 +267,10 @@ tabele `follows`, `listing_contacts` (odjeljak 4). `PATCH /api/listings/:id` pos
 
 1. Butik objavi 10 oglasa zaredom → u prvih 20 „Za tebe” nema 2 oglasa tog butika na udaljenosti < 4.
 2. Nema 3 ista kategorija zaredom kad postoje bar 2 kategorije među kandidatima.
-3. 5 strana zaredom (`izuzmi` raste) → nijedan id se ne ponavlja; poslije C∪D slijedi `kraj: true`.
+3. 5 strana zaredom (`izuzmi` raste) → nijedan id se ne ponavlja; poslije C∪D slijedi `kraj: true`. Isto s > 300
+   vidljivih oglasa (C∪D = 300): 15 strana, nijedna prazna s `kraj: false`, pa `kraj: true` (R2-01).
+3a. Na kraju „Za tebe” (i kad server vraća samo već prikazane oglase) klijent za 10 s mirovanja šalje ≤ 2 zahtjeva
+   `/api/feed` (e2e `feed-kraj`).
 4. Pozicije 5, 10, 15… (p%5==4) su iz D kad D ima neizuzet oglas.
 5. Kupac s ≥ 3 sviđanja samo „Haljine”: udio haljina u prvih 20 veći nego kod neprijavljenog (ista baza).
 6. Oglas pregledan (red u `listing_views` za tog gledaoca, danas) rangira se niže nego isti oglas bez pregleda.
@@ -281,8 +294,8 @@ otvori link. Kao butik, želim podijeliti svoj Komodo profil na Instagramu.
 Botovi (Viber, WhatsApp, Facebook, Instagram, Telegram) ne izvršavaju JS: oznake moraju biti u HTML-u koji vraća
 `GET /` (i `/index.html`) za `?o=<id>` i `?b=<handle>`. Linkovi ostaju isti (već podijeljeni rade).
 
-- `web/index.html`: odmah iza `<meta charset>` oznaka `<!--OG-->`; server je zamjenjuje, a `<title>` mijenja na
-  `og:title`. Bez parametara: zadane oznake.
+- `web/index.html`: bez posebnog markera. Server (`ogHtml` u `api/src/rute/og.js`, poziva ga `staticki.js`) umeće
+  oznake neposredno prije `</head>`, a `<title>` mijenja na `og:title`. Bez parametara: zadane oznake.
 - Vrijednosti se escape-uju (`& < > " '`). Sve URL adrese apsolutne, na osnovu `APP_URL` (u produkciji `https://komodo.ba`).
 
 | | Oglas `/?o=ID` | Butik `/?b=handle` | Zadano |
@@ -602,7 +615,12 @@ da sniženje vide oni koje zanima.
 #### Pravila
 
 - Okidač: `PATCH /api/listings/:id` gdje je nova cijena ≤ 95% stare (najmanje 5% niže), oglas nije prodat,
-  video je `ready`, butik nije ugašen.
+  video je `ready`, butik nije ugašen, **i cijena prije ove izmjene je važila najmanje 72 h** (odluka tima, R2-07:
+  zaštita od „digni pa spusti”, npr. 50 → 500 → 50 KM). Vrijeme važenja je `listings.price_set_at` (objava ili
+  izmjena koja mijenja cijenu; migracija 012). Precrtana cijena (`old_price_cents`) se i dalje upisuje po pravilu
+  ispod, i kad push izostane. Vlasnik u odgovoru dobija `pushSnizenje` (true/false), a forma izmjene tada umjesto
+  „Kupci koji su označili…” piše „Cijena je mijenjana u zadnja 3 dana, pa kupci ovaj put neće dobiti obavještenje o
+  sniženju.”
 - Pri takvom sniženju: `old_price_cents = stara cijena` (ako već postoji aktivno sniženje mlađe od 7 dana, zadržati
   veću od postojeće i stare), `price_dropped_at = now()`. Povećanje cijene iznad `old_price_cents` ili
   `price_dropped_at` starije od 7 dana → precrtana cijena se ne prikazuje (`oldPrice: null`).
@@ -651,6 +669,9 @@ da sniženje vide oni koje zanima.
 4. Kupac s `pushEnabled:false`, ugašen ili blokiran/blokirao butik → ne dobija.
 5. 2.500 sviđanja → 25 zahtjeva Expo-u, odgovor na PATCH < 300 ms (slanje u pozadini).
 6. Povećanje na 99,00 → `oldPrice: null`.
+7. 50 → 500 → 50 KM (500 KM važi < 72 h): nema pusha (`obavijesteno: false`), `oldPrice` = 500 (R2-07).
+8. Cijena stara 71 h → nema pusha; 73 h → push. Izmjena bez promjene cijene ne pomjera rok.
+9. Oglas u obradi (Bunny) → nema pusha ni označavanja kupaca (R2-08).
 
 ---
 
@@ -819,7 +840,7 @@ ovdje su navedene rute i dijelovi ekrana — arhitekt ih mapira na fajlove prije
 
 Mobilni (paralelno s talasom 3): Android kanal „Sniženja”, dodir na push s `listingId` → `__komodoOpenListing(id)`.
 QA: za svaki paket testovi iz „Kriteriji prihvatanja”; poslije talasa 3 test opterećenja s `/api/feed`.
-DevOps: vremenska zona baze, Nginx keš `/` s `$args`, Bunny bez zaštite od hotlinka za sličice.
+DevOps: vremenska zona baze, Nginx keš `/` s `$args`, ~~Bunny bez zaštite od hotlinka za sličice~~ — otkazano (odjeljak 8): zaštita ostaje uključena, sličice služi naš server (`/og/:id.jpg`).
 
 ## 6. Namjerno van v1
 
@@ -837,4 +858,7 @@ kategorije (nalaz 17), sistemska poruka s karticom oglasa u razgovoru.
 Na Bunnyju je uključeno „Block direct url file access” i Stefan je odlučio da se ne isključuje. Zato `og:image` ne
 smije pokazivati direktno na Bunny: server služi sličicu sa svoje adrese (`/og/:id.jpg` — preuzme `thumbnail.jpg`
 s Bunnyja sa serverske strane, čuva je na disku i kešira), a za lokalni snimak u obradi koristi zajedničku
-`og-komodo.png`. Stavka „Bunny bez zaštite od hotlinka” iz odjeljka 5 se ne radi.
+`og-komodo.png`. Stavka „Bunny bez zaštite od hotlinka” iz odjeljka 5 se ne radi (otkazana).
+
+Oznake `og:*` server umeće neposredno prije `</head>` (`api/src/rute/og.js`, poziva ga `api/src/rute/staticki.js`);
+`<!--OG-->` marker u `index.html` ne postoji.

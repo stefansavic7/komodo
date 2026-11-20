@@ -9,8 +9,10 @@ function setAuthMode(mode) {
   authMode = mode;
   var reg = mode === 'register';
   $('#authTitle').textContent = reg ? 'Novi nalog' : 'Prijava';
+  // U-04: u režimu „Novi nalog” tekst prema sačuvanoj radnji (sviđanje, poruka, praćenje).
+  var posle = reg ? readPosle() : null;
   $('#authLead').textContent = reg
-    ? 'Nalog je besplatan. S njim čuvaš šta ti se sviđa i pišeš buticima.'
+    ? ((posle && posle.lead) || 'Nalog je besplatan. S njim čuvaš šta ti se sviđa i pišeš buticima.')
     : 'Prijavi se da označiš šta ti se sviđa i pišeš buticima.';
   $('#authShopField').hidden = !reg;
   $('#authSubmit').textContent = reg ? 'Napravi nalog' : 'Prijavi se';
@@ -117,3 +119,24 @@ $('#passForm').addEventListener('submit', function (e) {
     toast('Lozinka je promijenjena.');
   }).catch(function (err) { $('#passErr').textContent = err.message; });
 });
+
+/* ---------- U-04: neprijavljen dodir na „Pošalji poruku” i „Prati” (profil butika, kontakt) ---------- */
+
+// Dugmad iz butik.js (profil butika, prozor kontakta) pozivaju needLogin; ovdje se presreću prije njih
+// i čuvaju radnju, da se poslije registracije izvrši (runPosle u prikazi.js).
+document.addEventListener('click', function (e) {
+  if (me || !e.target.closest) { return; }
+  var p = null, btn;
+  if ((btn = e.target.closest('#contactMsg'))) {
+    var name = $('#contactTitle').textContent;
+    p = { t: 'chat', handle: btn.getAttribute('data-handle'), listingId: btn.getAttribute('data-listing') || null, lead: 'Napravi besplatan nalog da pišeš butiku ' + name + '.' };
+    contactSheet.hidden = true;
+  } else if ((btn = e.target.closest('#vMsg'))) {
+    p = { t: 'chat', handle: btn.getAttribute('data-handle'), listingId: null, lead: 'Napravi besplatan nalog da pišeš butiku ' + $('#vName').textContent + '.' };
+  } else if ((btn = e.target.closest('#vFollow')) && vShop) {
+    p = { t: 'follow', handle: vShop.handle, name: vShop.shopName, id: null, lead: 'Napravi besplatan nalog da pratiš ' + vShop.shopName + '.' };
+  }
+  if (!p) { return; }
+  e.stopPropagation(); e.preventDefault();
+  needAccount(p);
+}, true);

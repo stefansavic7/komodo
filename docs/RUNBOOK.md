@@ -325,6 +325,19 @@ sudo find /var/cache/nginx/komodo -mindepth 1 -delete
   verzija ima migraciju baze”), stara verzija obično radi i s novom bazom (migracije samo dodaju). Ako ne radi
   (greške o kolonama/tabelama u `docker compose logs api`), vrati bazu iz kopije napravljene prije objave
   (`/backup/objava/`, najnovija) po odjeljku 8.1 — sve upisano od objave se gubi, pa to odlučuje Stefan.
+- **Povratak na verziju prije migracije 012 (R2-02, R2-07).** Stara verzija radi s novom bazom: ponovo piše
+  `listings.base_score` (kolona je ostala; prvi prolaz posla pri startu je popuni), a kandidate „Za tebe” čita bez
+  indeksa (pregled ~10.000 redova jednom u minuti po procesu — prihvatljivo). `listing_scores` i `price_set_at` ostaju
+  i ne smetaju; ponovna objava nove verzije ne traži ništa (posao za 5 min osvježi `listing_scores`).
+- **Povratak na verziju prije migracije 010 (sigurnost, S-18).** Migracija 010 pretvara tokene sesija u
+  sha256 (`api/migrations/010_sigurnost.sql`). Stara verzija traži sirovi token, pa poslije povratka **niko nije
+  prijavljen** (prijava ponovo radi, ništa ne pada; feed, profili i `/api/me` rade). Sesije koje stara verzija
+  napravi čuvaju sirovi token u bazi do isteka (30 dana), a nova verzija ih ne prepoznaje. Ponovna objava nove
+  verzije ne traži ništa posebno: 010 je već primijenjena i ne ponavlja se; ti korisnici se samo prijave ponovo.
+  Ne pretvarati ove sesije SQL-om: sirovi token i sha256 su oba 64 znaka hex, pa se ne mogu razlikovati i
+  pretvaranje bi dvaput heširalo već pretvorene. Ako sirovi tokeni ne smiju ostati u bazi:
+  `delete from sessions where created_at >= 'VRIJEME-POVRATKA'` (vrijeme prvog starta stare verzije).
+  Linkovi `#potvrda=` iz emailova poslanih dok je radila stara verzija ne rade u starom webu.
 - Server je sada na „odvojenoj” verziji: `objava.sh` odbija rad dok se ne vrati na granu. Kad je popravka na
   GitHubu: `git checkout main` (ili ime grane iz `git branch`), pa `~/komodo/server/objava.sh`.
 
@@ -409,6 +422,22 @@ docker image prune -f
 
 - Ako `reboot-required` postoji, u mirno doba `sudo reboot` (kontejneri se podignu sami), pa odjeljak 0.
 - Probno vraćanje kopije (odjeljak 9) i upis u tabelu.
+
+### Hitno uklanjanje sličice iz keša (zahtjev za uklanjanje sadržaja)
+
+Kad butik ili administrator obriše oglas (ili ugasi butik), API odmah briše sličicu s diska i iz svojih keševa, a
+`/og/<id>.jpg` vraća 404. Nginx (`location ^~ /og/`) drži već poslanu sličicu još najviše **1 h** (R2-03), a
+preglednici i botovi isto toliko (`max-age=3600`). Kad sadržaj mora nestati odmah (zahtjev osobe, prijava), obriši
+zapis iz Nginx keša. Ključ je `$scheme$host$request_uri` (`server/nginx-komodo.conf`), npr. za oglas 123:
+
+```bash
+sudo grep -rlZ "KEY: httpskomodo.ba/og/123.jpg" /var/cache/nginx/komodo | sudo xargs -0 -r rm -f
+curl -sI https://komodo.ba/og/123.jpg | head -1
+```
+
+Drugi red mora pokazati `404`. Sve sličice odjednom: `sudo find /var/cache/nginx/komodo -mindepth 1 -delete`
+(odjeljak 10; briše i keš statičkih fajlova, koji se sam ponovo puni). Kopije koje su botovi (Facebook, Viber)
+već preuzeli ne kontrolišemo.
 
 ## 13. Čuvanje podataka (za politiku privatnosti)
 

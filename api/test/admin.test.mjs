@@ -178,6 +178,33 @@ describe('spisak i gašenje naloga', () => {
     assert.equal((await kupac.get(`/api/listings/${l.id}`)).status, 200);
   });
 
+  test('R2-03: gašenje butika i brisanje naloga butika odmah čiste keš feeda i pregleda linka (OG)', async () => {
+    const ids = (r) => r.body.oglasi.map((x) => x.id);
+    const provjeri = async (l, ima) => {
+      // Ista adresa koja je napunila keš (Za tebe 60 s, Novo 5 s, OG 60 s).
+      assert.equal(ids(await kupac.get('/api/feed?category=Nakit')).includes(l.id), ima, 'Za tebe');
+      assert.equal(ids(await kupac.get('/api/feed?kartica=novo&category=Nakit')).includes(l.id), ima, 'Novo');
+      const og = await o.klijent().get(`/?o=${l.id}`);
+      assert.equal(og.body.includes(l.title), ima, 'OG');
+    };
+    const b1 = await noviButik(o.baza, { butik: 'Butik Kes Gasenje', email: 'kes.gasenje@test.ba' });
+    const s1 = o.klijent(); await s1.prijavi(b1.email, b1.password);
+    const l1 = (await s1.objavi({ title: 'Ogrlica Gasenje R2', category: 'Nakit' })).body.oglas;
+    await provjeri(l1, true);
+    const id1 = (await s1.get('/api/me')).body.korisnik.id;
+    await admin.post(`/api/admin/users/${id1}/suspend`, {});
+    await provjeri(l1, false);
+    await admin.post(`/api/admin/users/${id1}/suspend`, { suspended: false });
+    await provjeri(l1, true);
+
+    const b2 = await noviButik(o.baza, { butik: 'Butik Kes Brisanje', email: 'kes.brisanje@test.ba' });
+    const s2 = o.klijent(); await s2.prijavi(b2.email, b2.password);
+    const l2 = (await s2.objavi({ title: 'Prsten Brisanje R2', category: 'Nakit' })).body.oglas;
+    await provjeri(l2, true);
+    assert.equal((await s2.post('/api/me/delete', { password: b2.password })).status, 200);
+    await provjeri(l2, false);
+  });
+
   test('admin ne gasi sebe (400); nepostojeći nalog 404', async () => {
     const meId = (await admin.get('/api/me')).body.korisnik.id;
     assert.equal((await admin.post(`/api/admin/users/${meId}/suspend`, {})).status, 400);

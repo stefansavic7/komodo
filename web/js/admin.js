@@ -21,8 +21,57 @@ function renderAdmin() {
         '<button type="button" class="btn btn-danger" data-susp="1" data-id="' + uid + '">Ugasi nalog</button></div></li>';
     }).join('');
   }).catch(function (err) { $('#admReportsHint').textContent = err.message; });
-  api('GET', '/api/admin/users').then(function (d) {
-    $('#admUsers').innerHTML = d.nalozi.map(function (u) {
+  renderAdminStats();
+  loadAdminUsers();
+}
+
+/* ---------- brojke (F-09) ---------- */
+
+(function () {
+  var box = document.createElement('section');
+  box.id = 'admStats'; box.className = 'adm-stats';
+  box.innerHTML = '<h2>Brojke</h2><p class="hint" id="admStatsHint">Učitavam brojke…</p><div id="admStatsBody" hidden></div>';
+  admin.insertBefore(box, admin.querySelector('h2'));
+  var users = $('#admUsers'), find = document.createElement('div');
+  find.className = 'field adm-find';
+  find.innerHTML = '<label for="admSearch">Traži po imenu ili emailu</label>' +
+    '<input id="admSearch" type="search" maxlength="60" autocomplete="off" placeholder="Ime butika, ime ili email">';
+  users.parentNode.insertBefore(find, users);
+})();
+function admTile(label, today, yesterday) {
+  return '<div class="adm-tile"><span class="adm-lbl">' + esc(label) + '</span><strong>' + fmtBroj(today) + '</strong>' +
+    '<span class="adm-prev">(juče ' + fmtBroj(yesterday) + ')</span></div>';
+}
+function admDay(iso) { return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.'; }
+function renderAdminStats() {
+  api('GET', '/api/admin/stats').then(function (d) {
+    var b = d.brojke, t = b.dani[0], j = b.dani[1];
+    var at = b.azurirano ? new Date(b.azurirano) : null;
+    var hm = at ? ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2) : '';
+    $('#admStatsHint').textContent = 'Osvježava se svakih 15 minuta' + (at ? ', zadnje u ' + hm : '') + '.';
+    $('#admStatsBody').hidden = false;
+    $('#admStatsBody').innerHTML = '<div class="adm-tiles">' +
+      admTile('Aktivni danas', t.active, j.active) + admTile('Registracije', t.registrations, j.registrations) +
+      admTile('Novi oglasi', t.listings, j.listings) + admTile('Poruke', t.messages, j.messages) + '</div>' +
+      '<div class="adm-table-wrap"><table class="adm-table"><thead><tr><th>Dan</th><th>Aktivni</th><th>Registracije</th><th>Oglasi</th><th>Poruke</th></tr></thead><tbody>' +
+      b.dani.map(function (x) {
+        return '<tr><td>' + admDay(x.day) + '</td><td>' + fmtBroj(x.active) + '</td><td>' + fmtBroj(x.registrations) +
+          '</td><td>' + fmtBroj(x.listings) + '</td><td>' + fmtBroj(x.messages) + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      '<p class="adm-total">Ukupno: ' + fmtBroj(b.ukupno.users) + ' korisnika · ' + fmtBroj(b.ukupno.shops) + ' butika · ' +
+      fmtBroj(b.ukupno.listings) + ' aktivnih oglasa</p>' +
+      '<p class="hint">Aktivni = različiti ljudi i uređaji koji su pogledali bar jedan oglas tog dana.</p>';
+  }).catch(function (err) { $('#admStatsHint').textContent = err.message; $('#admStatsBody').hidden = true; });
+}
+
+/* ---------- nalozi s pretragom (U-15) ---------- */
+
+var admUsersSeq = 0, admSearchTimer = null;
+function loadAdminUsers() {
+  var term = ($('#admSearch').value || '').trim(), seq = ++admUsersSeq;
+  api('GET', '/api/admin/users' + (term ? '?q=' + encodeURIComponent(term) : '')).then(function (d) {
+    if (seq !== admUsersSeq) { return; }
+    $('#admUsers').innerHTML = !d.nalozi.length ? '<li><span class="muted">Nema naloga za ovu pretragu.</span></li>' : d.nalozi.map(function (u) {
       return '<li><strong>' + esc(u.name) + (u.suspended ? ' (ugašen)' : '') + '</strong>' +
         '<span class="muted">' + (u.role === 'butik' ? 'Butik · ' + u.listings + ' oglasa' : 'Kupac') + ' · ' + esc(u.email) + '</span>' +
         '<div class="p-row"><button type="button" class="btn' + (u.suspended ? '' : ' btn-danger') + '" data-susp="' + (u.suspended ? '0' : '1') + '" data-id="' + u.id + '">' +
@@ -30,6 +79,10 @@ function renderAdmin() {
     }).join('');
   }).catch(function () {});
 }
+$('#admSearch').addEventListener('input', function () {
+  clearTimeout(admSearchTimer);
+  admSearchTimer = setTimeout(loadAdminUsers, 300);
+});
 admin.addEventListener('click', function (e) {
   var b = e.target.closest('[data-res], [data-susp]');
   if (!b) { return; }

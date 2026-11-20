@@ -6,14 +6,33 @@ pokrenu API kao poseban proces (`api/src/server.js`), a na kraju ga ugase i bazu
 
 | Šta | Gdje | Pokretanje (iz foldera) |
 |---|---|---|
-| API testovi (node:test, 121 test, ~7 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
+| API testovi (node:test, 222 testa u 18 fajlova, ~32 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
 | Test istovremenosti | `api/test/opterecenje/istovremenost.mjs` | `api`: `npm run test:istovremenost` |
 | Test opterećenja | `api/test/opterecenje/opterecenje.mjs` | vidi `api/test/opterecenje/README.md` |
 | Punjenje probne baze (samo lokalno) | `api/test/opterecenje/napuni-bazu.mjs` | vidi isti README |
-| E2E u pregledniku (Playwright, 390×844) | `tests/e2e/*.spec.mjs` | `tests`: `npx playwright test` |
+| Testovi mobilne navigacije (6 testova, bez zavisnosti) | `mobile/navigacija.test.mjs` | repozitorij: `node --test mobile/navigacija.test.mjs` |
+| E2E u pregledniku (Playwright, 390×844) | `tests/e2e/*.spec.mjs` (9 fajlova, 33 testa) | `tests`: `npx playwright test` |
 | CI na svaki push i pull request | `.github/workflows/ci.yml` | GitHub Actions |
 
-## API testovi — šta pokrivaju
+## Spisak test fajlova (stanje 20.11.2026.)
+
+API (`api/test/`, ukupno 222): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
+`butik-profil` 8, `butik-sati` 11, `feed-algoritam` 16, `feed-r01-klaster` 4, `nalog` 23, `og-pregled` 15,
+`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `poruke-r04-blokiranje` 7, `poruke` 14, `sigurnost` 15,
+`statistika-admin` 7, `statistika-me` 8.
+
+E2E (`tests/e2e/`): `admin`, `butik-profil`, `butik`, `feed`, `feed-kraj`, `kupac`, `nadogradnja`, `oglas`,
+`poruke-statistika`. Mobilni: `mobile/navigacija.test.mjs` (6).
+
+Dodano uz Recenziju 2 (`docs/RECENZIJA-2.md`, „Stanje popravki”): `feed-algoritam` — straničenje „Za tebe” s 330
+vidljivih oglasa (C∪D = 300) do `kraj:true` bez ponavljanja i bez prazne strane (R2-01, R2-08); `oglas-snizenje` —
+„digni pa spusti” i rok 72 h (R2-07), sniženje oglasa u obradi uz lažni Bunny bez pusha (R2-08); `butik-pracenje` —
+praćenje butika koji se upravo briše → 404 (R2-06, deterministički: brisanje drži red zaključan); `admin` — gašenje
+i brisanje butika čiste keš feeda i OG (R2-03); `backend-sema` — migracija 012. E2E `feed-kraj` — kraj „Za tebe” na
+pravom serveru (330 oglasa) i na „pokvarenom” (lažni `/api/feed` uvijek isti, `kraj:false`): ≤ 2 zahtjeva u 10 s
+mirovanja (R2-01); vlastita baza i API, ne dira zajedničke podatke.
+
+## API testovi — šta pokrivaju (osnovni fajlovi; ostali su imenovani po temi, vidi spisak iznad)
 
 - `nalog.test.mjs` — registracija (provjere, dupli email, isto ime), potvrda emaila (link iz emaila, ponovno
   slanje, nepotvrđen ne šalje poruke), prijava i odjava, zaboravljena lozinka (link, jednokratni token,
@@ -90,7 +109,8 @@ cd ../tests && CHROME_PATH=/usr/bin/google-chrome npx playwright test
 `.github/workflows/ci.yml`, na svaki push i pull request, bez tajni:
 
 1. posao **api**: Postgres 16 kao servis, `npm ci` u `api/`, `node --check` svih `.js/.mjs/.cjs` u
-   repozitoriju, `npm test`, `npm run test:istovremenost`;
+   repozitoriju osim `mobile/` (`node --check` tamo lažno prolazi za kod bez `"type": "module"` i ne čita JSX, R-11),
+   `node --test mobile/navigacija.test.mjs`, `npm test`, `npm run test:istovremenost`;
 2. posao **e2e**: Postgres 16, `npm ci` u `api/` i `tests/`, `npx playwright install --with-deps chromium`,
    `npx playwright test`; ako padne, izvještaj i snimci ekrana su u artefaktu `playwright-izvjestaj`.
 

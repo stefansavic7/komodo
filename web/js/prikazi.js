@@ -7,13 +7,14 @@
 
 function show(view, keepFeed) {
   var isFeed = view === 'feed';
+  if (!me && view !== 'profile') { clearPosle(); }   // U-04: sačuvana radnja važi samo dok je korisnik na prijavi
   feed.hidden = !isFeed; topbar.hidden = !isFeed;
   profile.hidden = view !== 'profile'; shopView.hidden = view !== 'shop';
   inbox.hidden = view !== 'inbox'; chat.hidden = view !== 'chat'; admin.hidden = view !== 'admin';
   if (view !== 'chat') { stopChat(); }
   clearInterval(profileTimer); profileTimer = null;
   clearInterval(feedTimer); feedTimer = null;
-  if (isFeed) { feedTimer = setInterval(refreshLikes, 15000); }
+  if (isFeed) { feedTimer = setInterval(refreshLikes, LIKES_EVERY); }
   if (view === 'profile') { profileTimer = setInterval(refreshProfileGrid, 30000); }
   var tabView = view === 'chat' ? 'inbox' : (view === 'admin' ? 'profile' : view);
   var ts = tabs.querySelectorAll('.tab');
@@ -22,6 +23,7 @@ function show(view, keepFeed) {
     else { ts[k].removeAttribute('aria-current'); }
   }
   if (isFeed) { if (!keepFeed) { watch(); } return; }
+  hideUputa();   // U-12: uputa za prevlačenje važi samo u feedu
   pauseAll();
   if (view === 'profile') { renderProfile(); }
   if (view === 'inbox') { renderInbox(); }
@@ -33,7 +35,11 @@ tabs.addEventListener('click', function (e) {
   var go = b.getAttribute('data-go');
   if (go === 'post') { openPost(); }
   else if (go === 'inbox' && !me) { needLogin('Prijavi se da vidiš poruke.'); }
-  else { show(go); }
+  else {
+    show(go);
+    // Dubinski link (?b=butik) ne učitava feed; prvi dodir na Početna ga učitava.
+    if (go === 'feed' && !items.length && !loading) { loadFeed(true); }
+  }
 });
 function setBadge(n) {
   var b = $('#badge');
@@ -56,9 +62,35 @@ function afterAuthChange() {
   clearInterval(unreadTimer); unreadTimer = null;
   if (me) { unreadTimer = setInterval(tickUnread, 60000); }
   refreshUnread();
+  forgetFollows();   // skup praćenih butika (butik.js) vrijedi za jednog korisnika
+  if (me) { ensureFollows(); }
   if (!profile.hidden) { renderProfile(); }
   if (!me && (!inbox.hidden || !chat.hidden || !admin.hidden)) { show('profile'); }
+  // U-04: radnja koju je neprijavljen korisnik započeo (sviđanje, poruka, praćenje) izvršava se sad.
+  var posle = me ? readPosle() : null;
+  if (posle && posle.t !== 'tab') { clearPosle(); runPosle(posle); return; }
   loadFeed(true);
+}
+function feedHome(firstId) {
+  shop = null; brand.hidden = false; shopbar.hidden = true; filter = 'Sve';
+  renderChips(); show('feed', true);
+  return loadFeed(true, firstId);
+}
+function runPosle(p) {
+  if (p.t === 'like' && /^\d+$/.test(String(p.id))) {
+    feedHome(p.id).then(function () { var it = byId(p.id); if (it && !it.liked && !it.mine) { setLike(it, true); } });
+  } else if (p.t === 'chat' && p.handle) {
+    feedHome(null);
+    startChat(p.handle, p.listingId);
+  } else if (p.t === 'follow' && p.handle) {
+    ensureFollows().then(function () {
+      return isFollowing(p.handle) ? null : followShop(p.handle, p.name || p.handle, true);
+    }).catch(function (err) { toast(err.message, true); }).then(function () {
+      if (p.id) { feedHome(p.id).then(function () { paintAllFollow(); }); } else { openShopProfile(p.handle); }
+    });
+  } else {
+    loadFeed(true);
+  }
 }
 
 // Kad se korisnik vrati na karticu preglednika, osvježi ono što gleda.

@@ -46,10 +46,27 @@ describe('razvoj (bez Bunnyja)', () => {
          or (table_name = 'users' and column_name in ('address','hours','followers_count','following_count'))
          or (table_name = 'likes' and column_name = 'price_notified_at')`)).rows.length;
     assert.equal(cols, 10);
+    // listings_score_idx i listings_cat_score_idx: zamijenjeni tabelom listing_scores (migracija 012, R2-02).
     const idx = (await o.baza.q(`select indexname from pg_indexes where indexname in
-      ('listings_score_idx','listings_cat_score_idx','listings_fresh_idx','listings_sizes_idx','follows_shop_idx',
+      ('listing_scores_score_idx','listings_fresh_idx','listings_sizes_idx','follows_shop_idx',
        'messages_created_brin','listings_created_brin','conversations_created_brin','users_created_brin')`)).rowCount;
-    assert.equal(idx, 9);
+    assert.equal(idx, 8);
+    const stari = (await o.baza.q(`select indexname from pg_indexes where indexname in
+      ('listings_score_idx','listings_cat_score_idx','listings_scored_idx')`)).rowCount;
+    assert.equal(stari, 0);
+  });
+
+  test('migracija 012: listing_scores (ocjena van listings) i listings.price_set_at', async () => {
+    const c = (await o.baza.q(`select table_name || '.' || column_name as c from information_schema.columns
+      where (table_name = 'listing_scores' and column_name in ('listing_id','base_score'))
+         or (table_name = 'listings' and column_name = 'price_set_at') order by 1`)).rows.map((r) => r.c);
+    assert.deepEqual(c, ['listing_scores.base_score', 'listing_scores.listing_id', 'listings.price_set_at']);
+    // Objava bez Bunnyja odmah upisuje početnu ocjenu 1; brisanje oglasa briše ocjenu.
+    const l = (await shop.objavi({ title: 'Sema ocjena' })).body.oglas;
+    const s = async () => (await o.baza.q('select base_score from listing_scores where listing_id = $1', [l.id])).rows;
+    assert.deepEqual(await s(), [{ base_score: 1 }]);
+    assert.equal((await shop.del(`/api/listings/${l.id}`)).status, 200);
+    assert.deepEqual(await s(), []);
   });
 
   test('oglas: sizes, oldPrice, soldAt; prodato postavlja i briše soldAt', async () => {

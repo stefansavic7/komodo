@@ -1,6 +1,7 @@
 // Zajednički kontekst API-ja: podešavanja iz okoline, Fastify instanca s pluginovima, keš prijava i
 // pomoćne funkcije koje koristi više ruta. Rute su u src/rute/*.js, pozadinski poslovi u src/poslovi.js,
 // a src/server.js ih sve spaja i pokreće. Pregled: docs/ARHITEKTURA.md.
+import cluster from 'node:cluster';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
@@ -42,6 +43,19 @@ export const CATEGORIES = [
   'Haljine', 'Jakne i kaputi', 'Majice i košulje', 'Pantalone',
   'Obuća', 'Torbe', 'Nakit', 'Ostalo',
 ];
+// Veličine (docs/SPEC-V1.md, F-03): odjeća + UNI, obuća 35–46. Redoslijed = redoslijed prikaza.
+export const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'UNI',
+  '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46'];
+// Filter veličina iz upita (`sizes=M,L`): najviše 6 poznatih vrijednosti, sortirano (za ključ keša); [] = bez filtera.
+export function parseSizes(raw) {
+  const out = [];
+  for (const v of String(raw ?? '').slice(0, 200).split(',')) {
+    const t = v.trim().toUpperCase();
+    if (SIZES.includes(t) && !out.includes(t)) out.push(t);
+    if (out.length === 6) break;
+  }
+  return out.sort((a, b) => SIZES.indexOf(a) - SIZES.indexOf(b));
+}
 export const REPORT_REASONS = ['Neprimjeren sadržaj', 'Prevara ili lažan oglas', 'Uvredljiva poruka', 'Ostalo'];
 export const VIDEO_EXT = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' };
 
@@ -152,6 +166,8 @@ export function publicListing(r) {
     sizes: Array.isArray(r.sizes) ? r.sizes : [],
     oldPrice: oldPrice(r),
     soldAt: r.sold === true && r.sold_at ? r.sold_at : null,
+    // R2-07: samo vlasniku — da li bi sniženje sada poslalo push (cijena važi bar 72 h); forma izmjene to kaže.
+    pushSnizenje: r.mine === true && r.price_set_at ? Date.now() - new Date(r.price_set_at).getTime() >= 72 * 3600 * 1000 : undefined,
   };
 }
 
@@ -167,7 +183,7 @@ export const VISIBLE_SQL = bunnyOn
 export const LISTING_SELECT = `
   select l.id, l.user_id, l.title, l.price_cents, l.category, l.video_path, l.created_at, l.sold, l.views,
          l.video_provider, l.video_status, l.bunny_guid, l.video_res, l.likes_count,
-         l.sizes, l.sold_at, l.old_price_cents, l.price_dropped_at,
+         l.sizes, l.sold_at, l.old_price_cents, l.price_dropped_at, l.price_set_at,
          u.shop_name, u.handle,
          exists(select 1 from likes k where k.listing_id = l.id and k.user_id = $1) as liked,
          (l.user_id = $1) as mine
@@ -176,7 +192,7 @@ export const LISTING_SELECT = `
    where l.deleted_at is null and u.suspended_at is null
      and ${VISIBLE_SQL}`;
 
-export const VIDEO_COLS = 'video_path, video_provider, bunny_guid';
+export const VIDEO_COLS = 'id, video_path, video_provider, bunny_guid';
 
 // Izvršava fn(client) u jednoj transakciji i vraća njen rezultat.
 export async function inTransaction(fn) {
@@ -236,22 +252,44 @@ app.addHook('onRequest', (req, reply, done) => {
 });
 await app.register(multipart, { limits: { fileSize: MAX_VIDEO_MB * 1024 * 1024, files: 1, fields: 10 } });
 await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: '/media/', decorateReply: false, maxAge: '7d' });
-await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/', index: false });
+await app.register(fastifyStatic, { root: WEB_DIR, prefix: '/', index: false, cacheControl: false });
 
 // Briše snimke obrisanih oglasa: lokalni fajl i, ako postoji, snimak na Bunnyju.
 export async function removeListingFiles(rows, log = app.log) {
   for (const r of rows) {
     if (r.video_path) await unlink(path.join(UPLOADS_DIR, r.video_path)).catch(() => {});
+    // Sličica za pregled linka (rute/og.js): UPLOADS_DIR/og/<id>.jpg
+    if (r.id) await unlink(path.join(UPLOADS_DIR, 'og', `${r.id}.jpg`)).catch(() => {});
     if (r.bunny_guid) await deleteFromBunny(r.bunny_guid).catch((err) => log.warn(err, 'Snimak na Bunnyju nije obrisan'));
   }
 }
+
+/* ---------- poruke između procesa (cluster) ---------- */
+
+// Keševi su u memoriji svakog procesa. Kad jedan proces nešto poništi (sesiju, korisnika, feed), javlja to
+// ostalima: radnik → primarni proces (src/index.js) → svi ostali radnici. Bez clustera (npm run dev, testovi
+// sa src/server.js) poruka se samo izvrši lokalno. Poruka: { komodo: { t: '<vrsta>', v: <vrijednost> } }.
+const naPorukuFn = new Map();
+export function naPoruku(vrsta, fn) {
+  naPorukuFn.set(vrsta, fn);
+}
+export function javiSvima(vrsta, vrijednost) {
+  if (cluster.isWorker && process.send && process.connected) {
+    try { process.send({ komodo: { t: vrsta, v: vrijednost } }); } catch { /* primarni proces se gasi */ }
+  }
+}
+process.on('message', (m) => {
+  const fn = m && m.komodo && naPorukuFn.get(m.komodo.t);
+  if (fn) fn(m.komodo.v);
+});
 
 /* ---------- prijava (sesije) ---------- */
 
 // Keš prijava: token → korisnik (ili null), 15 sekundi, u memoriji svakog procesa posebno.
 // Kod odjave, promjene lozinke, brisanja i gašenja naloga, izmjene profila i potvrde emaila keš se
-// poništava odmah, ali samo u procesu koji je obradio zahtjev. Ostali procesi (src/index.js) mogu
-// do 15 s vidjeti staro stanje (npr. odjavljena sesija još radi, stari naziv profila) — to je prihvaćeno.
+// poništava odmah u procesu koji je obradio zahtjev, a ostali procesi dobijaju poruku (javiSvima, R-01)
+// i poništavaju ga za nekoliko milisekundi. Zahtjev koji u tom razmaku upiše nešto s id-jem obrisanog
+// korisnika dobija 401, ne 500 (onRoute ispod).
 // Vraćeni objekat je zajednički za više zahtjeva i ne smije se mijenjati.
 const USER_TTL = 15 * 1000;
 const USER_CACHE_MAX = 50000;
@@ -277,16 +315,64 @@ export async function currentUser(req) {
   return user;
 }
 
-export function forgetToken(token) {
+function forgetTokenHere(token) {
   if (token) userCache.delete(token);
 }
-
 // Poništava sve keširane sesije jednog korisnika (rijetke radnje, pa je prolaz kroz mapu prihvatljiv).
-export function forgetUser(userId) {
+function forgetUserHere(userId) {
   for (const [token, hit] of userCache) {
     if (hit.user && hit.user.id === userId) userCache.delete(token);
   }
 }
+naPoruku('token', forgetTokenHere);
+naPoruku('user', (id) => forgetUserHere(Number(id)));
+
+export function forgetToken(token) {
+  if (!token) return;
+  forgetTokenHere(token);
+  javiSvima('token', String(token).slice(0, 200));
+}
+
+export function forgetUser(userId) {
+  forgetUserHere(userId);
+  javiSvima('user', userId);
+}
+
+// R-01: upis s id-jem korisnika kojeg više nema (obrisan nalog, a sesija je još bila u kešu nekog procesa)
+// pada na stranom ključu (23503). Tada se sesija provjerava u bazi mimo keša: ako više ne važi, odgovor je
+// 401 umjesto 500. Važi za sve /api/ rute (sviđanje, pregled, poruka, praćenje…), pa ih ne treba mijenjati.
+async function sessionGone(req) {
+  const token = req.cookies && req.cookies.sid;
+  if (!token || token.length > 200) return false;
+  const res = await q(
+    `select 1 from sessions s join users u on u.id = s.user_id
+      where s.token = $1 and s.expires_at > now() and u.suspended_at is null`,
+    [hashToken(token)],
+  );
+  return res.rowCount === 0;
+}
+app.addHook('onRoute', (route) => {
+  if (!String(route.url || '').startsWith('/api/')) return;
+  const handler = route.handler;
+  route.handler = async function zasticeno(req, reply) {
+    try {
+      return await handler.call(this, req, reply);
+    } catch (err) {
+      if (err && err.code === '23503' && !reply.sent) {
+        if (await sessionGone(req).catch(() => false)) {
+          forgetToken(req.cookies.sid);
+          return bad(reply, 401, 'Sesija je istekla. Prijavi se ponovo.');
+        }
+        // R2-06: sesija važi, a nestao je butik ili oglas na koji upis pokazuje (npr. praćenje butika koji
+        // upravo briše nalog: upis čeka zaključan red butika i poslije brisanja pada na stranom ključu).
+        const c = String(err.constraint || '');
+        if (/_shop_id_fkey$/.test(c)) return bad(reply, 404, 'Ovaj butik ne postoji.');
+        if (/_listing_id_fkey$/.test(c)) return bad(reply, 404, 'Ovaj oglas ne postoji.');
+      }
+      throw err;
+    }
+  };
+});
 
 // Uređaj (kolačić `did`, potpisan COOKIE_SECRET-om, S-07): za brojanje pregleda neprijavljenih,
 // ograničenje registracija po uređaju i poznate uređaje pri prijavi (S-04).

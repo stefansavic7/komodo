@@ -6,7 +6,7 @@ export default async function priprema() {
   const baza = await novaBaza('komodo_test_e2e');
   let api;
   try {
-    api = await pokreniApi(baza, { ADMIN_EMAILS: 'admin@e2e.ba' });
+    api = await pokreniApi(baza, { ADMIN_EMAILS: 'admin@e2e.ba', ADMIN_STATS_CACHE_MS: '0', STATS_CACHE_MS: '0' });
     const butik = await noviButik(baza, { butik: 'Moda Bojana', email: 'bojana@e2e.ba', telefon: '065 123 456' });
     process.env.E2E_URL = api.url;
     process.env.E2E_BUTIK_EMAIL = butik.email;

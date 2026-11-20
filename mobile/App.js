@@ -10,13 +10,16 @@ import * as Application from 'expo-application';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
+import {
+  pathOf, pathWithQuery, isOwnUrl as isOwnUrlIn, isStandalonePage, toAppUrl as toAppUrlIn,
+  routeNotification, routeToUrl, shouldShowBanner,
+} from './navigacija';
 
 // Sistemski splash ostaje dok se prva stranica ne učita (ili dok ne javimo grešku).
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Adresa web aplikacije. U razvoju dolazi iz mobile/.env, a za objavu iz eas.json.
 const APP_URL = (process.env.EXPO_PUBLIC_APP_URL || 'https://komodo.ba').replace(/\/$/, '');
-const APP_HOST = hostOf(APP_URL);
 const PACKAGE = 'ba.komodo.app';
 const INK = '#16121a';
 const CORAL = '#ff6a4d';
@@ -34,44 +37,8 @@ const BEFORE_LOAD = `window.KOMODO_APP = ${JSON.stringify(APP_INFO)}; true;`;
 
 /* ---------- adrese ---------- */
 
-function hostOf(url) {
-  const m = /^https?:\/\/([^/?#:]+)/i.exec(String(url || ''));
-  return m ? m[1].toLowerCase() : '';
-}
-
-function pathOf(url) {
-  const m = /^https?:\/\/[^/?#]+([^?#]*)/i.exec(String(url || ''));
-  return (m && m[1]) || '/';
-}
-
-// Naša domena (i www. varijanta), tačno po imenu hosta, ne po početku teksta.
-function isOwnUrl(url) {
-  if (!/^https?:\/\//i.test(String(url))) return false;
-  const host = hostOf(url);
-  return host === APP_HOST || host === `www.${APP_HOST}`;
-}
-
-// Zasebne stranice (uslovi, privatnost, brisanje naloga) otvaramo u pregledniku: nemaju dugme Nazad
-// unutar aplikacije, a na iPhoneu bi korisnik u njima ostao zarobljen.
-function isStandalonePage(url) {
-  const path = pathOf(url).toLowerCase();
-  return path.endsWith('.html') && path !== '/index.html';
-}
-
-// komodo://… i https://komodo.ba/… pretvara u adresu web aplikacije, ili null ako nije naša.
-// Kratki oblici: komodo://o/123 (oglas), komodo://b/ime-butika, komodo://poruke/45.
-function toAppUrl(link) {
-  const url = String(link || '');
-  if (isOwnUrl(url)) return url;
-  const m = /^komodo:\/\/\/?([^?#]*)(\?[^#]*)?/i.exec(url);
-  if (!m) return null;
-  const path = m[1].replace(/\/+$/, '');
-  const query = m[2] || '';
-  const short = /^(o|b|poruke)\/([A-Za-z0-9_-]+)$/.exec(path);
-  if (short) return `${APP_URL}/?${short[1]}=${encodeURIComponent(short[2])}`;
-  if (!/^[A-Za-z0-9/_.-]*$/.test(path)) return `${APP_URL}/`;
-  return `${APP_URL}/${path}${query}`;
-}
+const isOwnUrl = (url) => isOwnUrlIn(url, APP_URL);
+const toAppUrl = (link) => toAppUrlIn(link, APP_URL);
 
 // Android stranice ponekad daju intent://…; otvaramo rezervnu adresu ako je ima.
 function intentFallback(url) {
@@ -105,22 +72,29 @@ let appActive = AppState.currentState === 'active';
 // osim kad je korisnik upravo u tom razgovoru.
 Notifications.setNotificationHandler({
   handleNotification: async (n) => {
-    const id = String(n?.request?.content?.data?.conversationId ?? '');
-    const sameChat = appActive && id !== '' && id === activeChat.id;
+    const show = shouldShowBanner(n?.request?.content?.data, activeChat.id, appActive);
     return {
-      shouldShowBanner: !sameChat,
-      shouldShowList: !sameChat,
-      shouldPlaySound: !sameChat,
+      shouldShowBanner: show,
+      shouldShowList: show,
+      shouldPlaySound: show,
       shouldSetBadge: false,
     };
   },
 });
 
-// Kanal mora postojati prije prvog obavještenja; server šalje channelId 'poruke'.
+// Kanali moraju postojati prije prvog obavještenja; server šalje channelId 'poruke' (poruke)
+// i 'snizenja' (PUSH_SNIZENJA_KANAL, sniženja cijena).
 if (Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('poruke', {
     name: 'Poruke',
+    description: 'Nove poruke od butika i kupaca.',
     importance: Notifications.AndroidImportance.HIGH,
+    lightColor: CORAL,
+  }).catch(() => {});
+  Notifications.setNotificationChannelAsync('snizenja', {
+    name: 'Sniženja',
+    description: 'Obavještenja kad se snizi cijena oglasa koji ti se sviđa.',
+    importance: Notifications.AndroidImportance.DEFAULT,
     lightColor: CORAL,
   }).catch(() => {});
 }
@@ -142,9 +116,9 @@ async function getPushToken(ask) {
   }
 }
 
-function conversationOf(response) {
-  const id = response?.notification?.request?.content?.data?.conversationId;
-  return /^\d+$/.test(String(id ?? '')) ? String(id) : null;
+// Šta dodir na obavještenje otvara: { kind: 'listing'|'chat', id } ili null.
+function routeOf(response) {
+  return routeNotification(response?.notification?.request?.content?.data);
 }
 
 /* ---------- početna adresa ---------- */
@@ -153,11 +127,11 @@ function conversationOf(response) {
 async function initialUrl(handled) {
   try {
     const last = Notifications.getLastNotificationResponse?.();
-    const id = conversationOf(last);
-    if (id) {
+    const target = routeToUrl(routeOf(last), APP_URL);
+    if (target) {
       handled.add(last.notification.request.identifier);
       Notifications.clearLastNotificationResponse?.();
-      return `${APP_URL}/?poruke=${id}`;
+      return target;
     }
   } catch { /* nastavljamo bez obavještenja */ }
   try {
@@ -223,7 +197,7 @@ export default function App() {
   const navigate = useCallback((url) => {
     if (!url) return;
     if (!loaded.current || failedNow.current) { setUri(url); retry(); return; }
-    const path = (/^https?:\/\/[^/?#]+(.*)$/i.exec(url)?.[1] || '/').replace(/^(?=[?#])/, '/');
+    const path = pathWithQuery(url);
     sendToWeb(`if (window.__komodoOpenUrl) { window.__komodoOpenUrl(${JSON.stringify(path)}); } else { location.href = ${JSON.stringify(url)}; }`);
   }, [retry, sendToWeb]);
 
@@ -251,22 +225,24 @@ export default function App() {
     return () => sub.remove();
   }, [ensurePush]);
 
-  const openConversation = useCallback((id) => {
-    if (!id) return;
-    if (!loaded.current) { setUri(`${APP_URL}/?poruke=${id}`); return; }
-    sendToWeb(`if (window.__komodoOpenChat) { window.__komodoOpenChat(${JSON.stringify(id)}); } else { location.href = ${JSON.stringify(`${APP_URL}/?poruke=${id}`)}; }`);
-  }, [sendToWeb]);
+  // Dodir na obavještenje dok aplikacija radi ili je u pozadini (hladan start rješava initialUrl).
+  const openRoute = useCallback((route) => {
+    if (!route) return;
+    if (route.kind === 'chat') { navigate(routeToUrl(route, APP_URL)); return; }
+    const url = routeToUrl(route, APP_URL);
+    if (!loaded.current || failedNow.current) { navigate(url); return; }
+    sendToWeb(`if (window.__komodoOpenListing) { window.__komodoOpenListing(${JSON.stringify(route.id)}); } else { location.href = ${JSON.stringify(url)}; }`);
+  }, [navigate, sendToWeb]);
 
-  // Dodir na obavještenje dok aplikacija radi ili je u pozadini.
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const key = response?.notification?.request?.identifier;
       if (key && handled.current.has(key)) return;
       if (key) handled.current.add(key);
-      openConversation(conversationOf(response));
+      openRoute(routeOf(response));
     });
     return () => sub.remove();
-  }, [openConversation]);
+  }, [openRoute]);
 
   // Linkovi komodo://… i https://komodo.ba/… dok aplikacija radi.
   useEffect(() => {

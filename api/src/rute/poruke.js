@@ -1,6 +1,6 @@
 // Poruke kupac–butik: otvaranje razgovora, spisak razgovora, čitanje i slanje poruka, blokiranje.
 import { q } from '../db.js';
-import { MIN, UNREAD_SQL, bad, clean, cleanLine, currentUser, isId, limited, myConversation } from '../app.js';
+import { MIN, UNREAD_SQL, VISIBLE_SQL, bad, clean, cleanLine, currentUser, isId, limited, myConversation } from '../app.js';
 import { pushNewMessage } from './push.js';
 
 async function blockState(userId, otherId) {
@@ -26,7 +26,8 @@ export default function rute(app) {
     if (shopRes.rowCount === 0) return bad(reply, 404, 'Ovaj butik ne postoji.');
     let listingId = null;
     if (isId(body.listingId)) {
-      const l = await q('select id from listings where id = $1 and user_id = $2 and deleted_at is null', [Number(body.listingId), shopRes.rows[0].id]);
+      // R-04: oglas u obradi ili obrisan se ne veže za razgovor (kupac ga ne smije vidjeti).
+      const l = await q(`select l.id from listings l where l.id = $2 and l.user_id = $3 and l.deleted_at is null and ${VISIBLE_SQL}`, [user.id, Number(body.listingId), shopRes.rows[0].id]);
       if (l.rowCount > 0) listingId = l.rows[0].id;
     }
     const res = await q(
@@ -48,7 +49,7 @@ export default function rute(app) {
               ${UNREAD_SQL} as unread
          from conversations c
          join users o on o.id = case when c.customer_id = $1 then c.shop_id else c.customer_id end
-         left join listings l on l.id = c.listing_id
+         left join listings l on l.id = c.listing_id and l.deleted_at is null and ${VISIBLE_SQL}
         where (c.customer_id = $1 or c.shop_id = $1) and c.last_message_at is not null
         order by c.last_message_at desc limit 100`,
       [user.id],
@@ -78,8 +79,8 @@ export default function rute(app) {
     const block = await blockState(user.id, otherId);
     let listing = null;
     if (conv.listing_id) {
-      const l = await q('select id, title, price_cents from listings where id = $1 and deleted_at is null', [conv.listing_id]);
-      if (l.rowCount > 0) listing = { id: l.rows[0].id, title: l.rows[0].title, price: l.rows[0].price_cents / 100 };
+      const l = await q(`select l.id, l.title, l.price_cents, l.sizes from listings l where l.id = $2 and l.deleted_at is null and ${VISIBLE_SQL}`, [user.id, conv.listing_id]);
+      if (l.rowCount > 0) listing = { id: l.rows[0].id, title: l.rows[0].title, price: l.rows[0].price_cents / 100, sizes: l.rows[0].sizes || [] };
     }
     return {
       sagovornik: { name: other.rows[0].shop_name, handle: other.rows[0].handle, butik: other.rows[0].role === 'butik' },
@@ -107,6 +108,10 @@ export default function rute(app) {
     );
     const mineCol = conv.customer_id === user.id ? 'customer_read_at' : 'shop_read_at';
     await q(`update conversations set last_message_at = now(), ${mineCol} = now() where id = $1`, [conv.id]);
+    // F-06: kontakt = kupac je pisao iz oglasa (jednom po kupcu i oglasu; otvaranje bez poruke se ne broji).
+    if (conv.customer_id === user.id && conv.listing_id) {
+      await q('insert into listing_contacts(listing_id, customer_id) values ($1, $2) on conflict do nothing', [conv.listing_id, user.id]);
+    }
     pushNewMessage(req.log, otherId, cleanLine(user.shop_name, 40), text, conv.id).catch(() => {});
     return reply.code(201).send({ poruka: { id: ins.rows[0].id, body: text, mine: true, at: ins.rows[0].created_at } });
   });

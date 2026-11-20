@@ -1,6 +1,7 @@
 // Pokretanje u više procesa (node:cluster): primarni proces jednom pokrene migracije, pa pokrene
 // WORKERS radnika (zadano: broj jezgara) koji svi slušaju isti port. Pozadinske poslove (Bunny,
-// email butiku, čišćenje) radi samo prvi radnik. `npm run dev` i dalje pokreće src/server.js direktno.
+// email butiku, čišćenje, base_score) radi samo prvi radnik. `npm run dev` i dalje pokreće src/server.js
+// direktno. Primarni proces prosljeđuje poruke o poništavanju keša između radnika.
 import cluster from 'node:cluster';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,6 +48,17 @@ function start(jobs) {
   });
   roles.set(worker.id, jobs);
 }
+
+// Poruke između radnika (R-01): radnik koji poništi keš (sesija, korisnik, feed) javlja to primarnom
+// procesu, a ovaj ga prosljeđuje svim ostalim radnicima (src/app.js, javiSvima/naPoruku).
+cluster.on('message', (from, m) => {
+  if (!m || typeof m !== 'object' || !m.komodo) return;
+  for (const w of Object.values(cluster.workers)) {
+    if (w && w !== from && w.isConnected()) {
+      try { w.send(m); } catch { /* radnik se upravo gasi */ }
+    }
+  }
+});
 
 for (let k = 0; k < WORKERS; k += 1) start(k === 0 ? '1' : '0');
 log(`Pokrenuto ${WORKERS} radnika (UV_THREADPOOL_SIZE=${process.env.UV_THREADPOOL_SIZE}).`);

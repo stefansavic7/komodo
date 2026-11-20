@@ -80,7 +80,9 @@ Promise.all([
     if (blocked) { return; }   // prestara verzija aplikacije: ostaje samo ekran za nadogradnju
     $('#tabPost').hidden = !isShop();
     if (me) { unreadTimer = setInterval(tickUnread, 60000); }
-    feedTimer = setInterval(refreshLikes, 15000);
+    // Skup praćenih butika (F-04, web/js/butik.js): jednom po učitavanju, za „Prati” na karticama i „Praćeni”.
+    if (me && typeof ensureFollows === 'function') { ensureFollows(); }
+    feedTimer = setInterval(refreshLikes, LIKES_EVERY);
     applyLink(startLink, true);
   });
 });

@@ -2,6 +2,38 @@
 import { q } from '../db.js';
 import { bad, clean, currentUser, hashToken } from '../app.js';
 
+export const PO_ZAHTJEVU = 100; // poruka u jednom zahtjevu prema Expo-u
+
+// Opšte slanje: niz Expo poruka ({to, title, body, channelId, data…}) u serijama po PO_ZAHTJEVU.
+// Zaglavlja, EXPO_ACCESS_TOKEN (S-09), EXPO_PUSH_URL (testovi, lažni Expo), rok od 10 s po zahtjevu;
+// tokeni koje Expo prijavi kao DeviceNotRegistered brišu se iz baze. Greške samo bilježi.
+export async function posaljiPush(log, messages) {
+  const url = process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send';
+  for (let i = 0; i < messages.length; i += PO_ZAHTJEVU) {
+    const serija = messages.slice(i, i + PO_ZAHTJEVU);
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json', Accept: 'application/json',
+          ...(process.env.EXPO_ACCESS_TOKEN ? { Authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}),
+        },
+        body: JSON.stringify(serija),
+        signal: AbortSignal.timeout(10000),
+      });
+      const out = await resp.json().catch(() => ({}));
+      const tickets = Array.isArray(out.data) ? out.data : [];
+      const mrtvi = [];
+      for (let k = 0; k < tickets.length; k += 1) {
+        if (tickets[k].status === 'error' && tickets[k].details?.error === 'DeviceNotRegistered') mrtvi.push(serija[k].to);
+      }
+      if (mrtvi.length) await q('delete from push_tokens where token = any($1::text[])', [mrtvi]);
+    } catch (err) {
+      log.warn(err, 'Push obavještenje nije poslano');
+    }
+  }
+}
+
 // Šalje push primaocu nove poruke. Ne zadržava odgovor pošiljaocu; greške samo bilježi.
 export async function pushNewMessage(log, recipientId, senderName, text, conversationId) {
   const res = await q(
@@ -11,31 +43,10 @@ export async function pushNewMessage(log, recipientId, senderName, text, convers
   );
   if (res.rowCount === 0) return;
   const body = text.length > 140 ? `${text.slice(0, 137)}…` : text;
-  const messages = res.rows.map((r) => ({
+  await posaljiPush(log, res.rows.map((r) => ({
     to: r.token, title: senderName, body, sound: 'default', channelId: 'poruke',
     data: { conversationId },
-  }));
-  try {
-    const resp = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      // S-09: s „Enhanced Security for Push Notifications” u Expo projektu slanje traži pristupni token.
-      headers: {
-        'Content-Type': 'application/json', Accept: 'application/json',
-        ...(process.env.EXPO_ACCESS_TOKEN ? { Authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}),
-      },
-      body: JSON.stringify(messages),
-      signal: AbortSignal.timeout(10000),
-    });
-    const out = await resp.json().catch(() => ({}));
-    const tickets = Array.isArray(out.data) ? out.data : [];
-    for (let k = 0; k < tickets.length; k += 1) {
-      if (tickets[k].status === 'error' && tickets[k].details?.error === 'DeviceNotRegistered') {
-        await q('delete from push_tokens where token = $1', [messages[k].to]);
-      }
-    }
-  } catch (err) {
-    log.warn(err, 'Push obavještenje nije poslano');
-  }
+  })));
 }
 
 export default function rute(app) {

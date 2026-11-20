@@ -9,6 +9,7 @@
 //                klijent šalje sid=tok<id>, a u bazi je sha256 heks tog tokena (napuni-bazu.mjs, migracija 010)
 //   BUTIKA       broj butika butik1…butikN (zadano 100)
 //   LIGHT=1      lakši klijent (tajmeri iz docs/SKALIRANJE.md); bez toga stari tajmeri
+//   FEED=1       (uz LIGHT=1) klijent v1: strane iz /api/feed?kartica=zatebe s izuzmi, sviđanja svakih 30 s (B-01)
 // Izlazni kod 1 ako je bilo grešaka (5xx ili prekinuta veza).
 import http from 'node:http';
 import https from 'node:https';
@@ -73,7 +74,16 @@ const ENDPOINTS = {
   view: (u) => req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/view`, { user: u, ip: `10.${rnd(0, 250)}.${rnd(0, 250)}.${rnd(1, 250)}` }),
   conversations: (u) => req('GET', '/api/conversations', { user: u }),
   shop: () => req('GET', `/api/listings?shop=butik${rnd(1, BUTIKA)}`),
+  // F-01: /api/feed. izuzmi = 0–200 nasumičnih id-jeva (kao klijent poslije 0–10 strana).
+  feed_zatebe_anon: () => req('GET', `/api/feed?izuzmi=${izuzmi(rnd(0, 10) * 20)}`),
+  feed_zatebe: (u) => req('GET', `/api/feed?izuzmi=${izuzmi(rnd(0, 10) * 20)}`, { user: u, ip: `10.1.${u % 250}.${u % 200}` }),
+  feed_zatebe_cat: (u) => req('GET', `/api/feed?category=${encodeURIComponent('Haljine')}&izuzmi=${izuzmi(rnd(0, 5) * 20)}`, { user: u }),
+  feed_novo: (u) => req('GET', `/api/feed?kartica=novo&before=${rnd(LISTING_MIN + 100, LISTING_MAX)}`, { user: u }),
+  feed_praceni: (u) => req('GET', '/api/feed?kartica=praceni', { user: u }),
 };
+function izuzmi(n) {
+  return Array.from({ length: Math.min(200, n) }, () => rnd(LISTING_MIN, LISTING_MAX)).join(',');
+}
 
 async function endpoint(name, conc, secs) {
   const fn = ENDPOINTS[name];
@@ -115,18 +125,27 @@ async function vuserLight(u, end) {
   const ip = `10.${u % 250}.${Math.floor(u / 250) % 250}.${(u % 7) + 1}`;
   const o = { user: u, ip };
   await sleep(rnd(0, 15000));
+  const FEED = process.env.FEED === '1';
+  const LIKES_MS = FEED ? 30000 : 15000;
+  const shown = [];
+  const page = async () => {
+    if (!FEED) return req('GET', shown.length ? `/api/listings?before=${rnd(LISTING_MIN + 100, LISTING_MAX)}` : '/api/listings', o);
+    const r = await req('GET', `/api/feed${shown.length ? `?izuzmi=${shown.slice(-200).join(',')}` : ''}`, o);
+    for (let k = 0; k < 20; k += 1) shown.push(rnd(LISTING_MIN, LISTING_MAX));
+    return r;
+  };
   rec(await req('GET', '/api/me', o));
-  rec(await req('GET', '/api/listings', o));
-  let tLikes = Date.now() + 15000, tMe = Date.now() + 60000, tViews = Date.now() + 30000, tVideo = Date.now() + 8000, seen = 0;
+  rec(await page());
+  let tLikes = Date.now() + LIKES_MS, tMe = Date.now() + 60000, tViews = Date.now() + 30000, tVideo = Date.now() + 8000, seen = 0;
   while (Date.now() < end) {
     const now = Date.now();
-    if (now >= tLikes) { rec(await req('GET', `/api/likes?ids=${rnd(LISTING_MIN, LISTING_MAX)}`, o)); tLikes += 15000; }
+    if (now >= tLikes) { rec(await req('GET', `/api/likes?ids=${rnd(LISTING_MIN, LISTING_MAX)}`, o)); tLikes += LIKES_MS; }
     if (now >= tMe) { rec(await req('GET', '/api/me', o)); tMe += 60000; }
     if (now >= tViews) { rec(await req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/view`, o)); tViews += 30000; }
     if (now >= tVideo) {
       if (Math.random() < 0.1) rec(await req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/like`, o));
       seen += 1;
-      if (seen % 20 === 0) rec(await req('GET', `/api/listings?before=${rnd(LISTING_MIN + 100, LISTING_MAX)}`, o));
+      if (seen % 20 === 0) rec(await page());
       tVideo += rnd(6000, 10000);
     }
     await sleep(Math.max(50, Math.min(tLikes, tMe, tViews, tVideo) - Date.now()));

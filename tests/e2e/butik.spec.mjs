@@ -25,6 +25,7 @@ test('butik: prijava, objava, izmjena, prodato i brisanje s potvrdom', async ({ 
   await page.locator('#fTitle').fill('Crna saten haljina, M');
   await page.locator('#fPrice').fill('65');
   await page.locator('#fCat').selectOption('Haljine');
+  await page.locator('#fSizes [data-size="M"]').click();
   const objava = page.waitForResponse((r) => r.url().endsWith('/api/listings') && r.request().method() === 'POST');
   await page.locator('#postSubmit').click();
   const odgovor = await objava;
@@ -45,7 +46,8 @@ test('butik: prijava, objava, izmjena, prodato i brisanje s potvrdom', async ({ 
   await expect(card.locator('.price')).toContainText('65');
 
   // Izmjena i oznaka prodato.
-  await card.locator('[data-act="edit"]').click();
+  await card.locator('[data-act="more"]').click();
+  await page.locator('#moreSheet [data-more="edit"]').click();
   await expect(page.locator('#editSheet')).toBeVisible();
   await expect(page.locator('#eTitle')).toHaveValue('Crna saten haljina, M');
   await page.locator('#eTitle').fill('Crna saten haljina, S');
@@ -61,13 +63,15 @@ test('butik: prijava, objava, izmjena, prodato i brisanje s potvrdom', async ({ 
   expect(poslije.oglas).toMatchObject({ title: 'Crna saten haljina, S', price: 59.9, sold: true });
 
   // Brisanje traži potvrdu; Odustani ne briše.
-  await card.locator('[data-act="del"]').click();
+  await card.locator('[data-act="more"]').click();
+  await page.locator('#moreSheet [data-more="del"]').click();
   await expect(page.locator('#confirmSheet')).toBeVisible();
   await expect(page.locator('#confirmTitle')).toHaveText('Obrisati oglas?');
   await page.locator('#confirmNo').click();
   await expect(page.locator('#confirmSheet')).toBeHidden();
   expect((await context.request.get(`/api/listings/${oglas.id}`)).status()).toBe(200);
-  await card.locator('[data-act="del"]').click();
+  await card.locator('[data-act="more"]').click();
+  await page.locator('#moreSheet [data-more="del"]').click();
   await page.locator('#confirmYes').click();
   await expect(page.locator('#toast')).toHaveText('Oglas je obrisan.');
   expect((await context.request.get(`/api/listings/${oglas.id}`)).status()).toBe(404);
@@ -87,6 +91,7 @@ test('butik odmah poslije objave vidi novi oglas u feedu', async ({ page }) => {
   await page.locator('#fVideo').setInputFiles(VIDEO);
   await page.locator('#fTitle').fill('Odmah vidljiv oglas');
   await page.locator('#fPrice').fill('20');
+  await page.locator('#fSizes [data-size="L"]').click();
   const objava = page.waitForResponse((r) => r.url().endsWith('/api/listings') && r.request().method() === 'POST');
   await page.locator('#postSubmit').click();
   const oglas = (await (await objava).json()).oglas;

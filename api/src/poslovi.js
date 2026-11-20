@@ -1,5 +1,5 @@
 // Pozadinski poslovi: slanje snimaka na Bunny Stream i provjera obrade, email butiku za nepročitane
-// poruke i čišćenje starih podataka. Pokreće ih src/server.js (pokreniPoslove) samo u procesu s
+// poruke, čišćenje starih podataka i ocjena oglasa za feed (base_score, svakih 5 min) i brojke za administraciju (daily_stats, svakih 15 min). Pokreće ih src/server.js (pokreniPoslove) samo u procesu s
 // KOMODO_JOBS različitim od '0' (s više procesa to je prvi radnik, vidi src/index.js).
 import { readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
@@ -64,9 +64,12 @@ async function checkVideos() {
     try {
       const st = await bunnyState(l.bunny_guid);
       if (st.state === 'ready') {
+        await q("update listings set video_status = 'ready', video_res = $1, ready_at = now() where id = $2", [st.res, l.id]);
+        // Početna ocjena svježeg oglasa (F-01); tačnu računa posao base_score u roku od 5 minuta.
         await q(
-          "update listings set video_status = 'ready', video_res = $1, ready_at = now() where id = $2",
-          [st.res, l.id],
+          `insert into listing_scores as t (listing_id, base_score) values ($1, 1)
+           on conflict (listing_id) do update set base_score = greatest(t.base_score, 1)`,
+          [l.id],
         );
       } else if (st.state === 'error') {
         await q("update listings set video_status = 'error' where id = $1", [l.id]);
@@ -75,6 +78,105 @@ async function checkVideos() {
       app.log.warn(err, `Provjera snimka oglasa ${l.id} na Bunnyju nije uspjela`);
     }
   }
+}
+
+/* ---------- ocjena oglasa za „Za tebe” (docs/SPEC-V1.md, F-01, korak 1) ---------- */
+
+// Ocjena je u zasebnoj tabeli listing_scores (migracija 012, R2-02), samo oglasi s ocjenom > 0. Posao čita
+// listings bez zaključavanja i piše samo u listing_scores, pa se ne sudara sa sviđanjima i pregledima
+// (update likes_count/views u listings). Ranije je ocjena bila u listings i svaka serija je zaključavala hiljade
+// redova koje mijenjaju /like i /view (p95 do 1,4 s dok posao radi).
+// Računaju se oglasi zadnjih 30 dana i svi koji još imaju ocjenu (da obrisani, ugašeni, stari i davno prodati
+// izgube red). U serijama po id-ju; red se upisuje samo kad se ocjena promijeni za više od 1 % (svježina se za
+// 5 min promijeni za 0,08 %, a redoslijed ne mijenja), a briše kad padne na 0.
+const SCORE_BATCH = 1000;
+
+const SCORE_SQL = `
+  with c as (
+    select listing_id, count(*)::float8 as n from listing_contacts where listing_id = any($1::int[]) group by listing_id
+  ),
+  n as (
+    select l.id,
+      (case
+        when l.deleted_at is not null or l.video_status <> 'ready' or u.suspended_at is not null
+          or l.created_at < now() - interval '30 days'
+          or (l.sold and l.sold_at < now() - interval '3 days') then 0
+        else power(0.5, extract(epoch from now() - l.created_at) / 3600 / 72)
+           * least(3, greatest(0.5,
+               ((l.likes_count + 3 * coalesce(c.n, 0) + 20 * $2::float8) / (l.views + 20)) / $2::float8))
+           * (case when l.sold then 0.3 else 1 end)
+           * (case when u.created_at > now() - interval '14 days' then 1.2 else 1 end)
+       end)::real as s
+      from listings l
+      join users u on u.id = l.user_id
+      left join c on c.listing_id = l.id
+     where l.id = any($1::int[])
+  ),
+  del as (
+    delete from listing_scores t using n where t.listing_id = n.id and n.s = 0 returning 1
+  ),
+  up as (
+    insert into listing_scores as t (listing_id, base_score)
+    select id, s from n where s > 0
+    on conflict (listing_id) do update set base_score = excluded.base_score
+     where abs(t.base_score - excluded.base_score) > 0.01 * greatest(t.base_score, excluded.base_score)
+    returning 1
+  )
+  select (select count(*) from del)::int + (select count(*) from up)::int as n`;
+
+export async function izracunajOcjene() {
+  // r_avg: prosjek (sviđanja + 3·kontakti) / pregledi za oglase zadnjih 30 dana s bar 20 pregleda; 0,05 ako
+  // takvih nema (ili su svi bez reakcija).
+  const avg = await q(
+    `select avg((l.likes_count + 3 * coalesce(c.n, 0))::float8 / l.views) as r
+       from listings l
+       left join lateral (select count(*) as n from listing_contacts k where k.listing_id = l.id) c on true
+      where l.deleted_at is null and l.created_at > now() - interval '30 days' and l.views >= 20`,
+  );
+  const rAvg = Number(avg.rows[0].r) > 0 ? Number(avg.rows[0].r) : 0.05;
+  // listings_fresh_idx (svježi) + listing_scores (s ocjenom, i obrisani).
+  const ids = (await q(
+    `select id from listings where deleted_at is null and created_at > now() - interval '30 days'
+     union
+     select listing_id from listing_scores
+     order by 1`,
+  )).rows.map((r) => r.id);
+  let promijenjeno = 0;
+  for (let k = 0; k < ids.length; k += SCORE_BATCH) {
+    const res = await q(SCORE_SQL, [ids.slice(k, k + SCORE_BATCH), rAvg]);
+    promijenjeno += Number(res.rows[0].n);
+  }
+  return { oglasa: ids.length, promijenjeno, rAvg };
+}
+
+/* ---------- brojke za administraciju (docs/SPEC-V1.md, F-09) ---------- */
+
+// Za jedan dan jedna naredba: `insert … on conflict (day) do update`. Pregledi se broje po različitom
+// gledaocu ('u…' prijavljen, 'd…' uređaj; isti čovjek prije i poslije prijave se broji dvaput), ostalo
+// preko BRIN indeksa na created_at. Računaju se danas i juče (juče se još dopunjuje poslije ponoći).
+const DAILY_SQL = `
+  insert into daily_stats(day, active, active_users, active_devices, registrations, shops, listings, messages, conversations, updated_at)
+  select d.day,
+         v.u + v.dv, v.u, v.dv,
+         (select count(*) from users where role = 'kupac' and created_at >= d.day and created_at < d.day + 1),
+         (select count(*) from users where role = 'butik' and created_at >= d.day and created_at < d.day + 1),
+         (select count(*) from listings where created_at >= d.day and created_at < d.day + 1),
+         (select count(*) from messages where created_at >= d.day and created_at < d.day + 1),
+         (select count(*) from conversations where created_at >= d.day and created_at < d.day + 1),
+         now()
+    from (select $1::date as day) d,
+         lateral (select count(distinct viewer) filter (where viewer like 'u%') as u,
+                         count(distinct viewer) filter (where viewer like 'd%') as dv
+                    from listing_views where day = d.day) v
+  on conflict (day) do update set
+    active = excluded.active, active_users = excluded.active_users, active_devices = excluded.active_devices,
+    registrations = excluded.registrations, shops = excluded.shops, listings = excluded.listings,
+    messages = excluded.messages, conversations = excluded.conversations, updated_at = excluded.updated_at`;
+
+export async function izracunajDnevneBrojke() {
+  const today = (await q("select to_char(current_date, 'YYYY-MM-DD') as d, to_char(current_date - 1, 'YYYY-MM-DD') as j")).rows[0];
+  for (const day of [today.j, today.d]) await q(DAILY_SQL, [day]);
+  return { dani: [today.j, today.d] };
 }
 
 /* ---------- email butiku za poruku koju nije pročitao 15 minuta ---------- */
@@ -115,6 +217,7 @@ async function cleanup() {
              and (key not like '%:dan:%' or window_start < now() - interval '25 hours')`);
   await q("delete from known_devices where seen_at < now() - interval '180 days'");
   await removeOrphanUploads();
+  await removeStaleOg();
   for (let k = 0; k < 20; k += 1) {
     const res = await q(
       `delete from listing_views where ctid in (
@@ -146,6 +249,26 @@ async function removeOrphanUploads() {
   }
 }
 
+// Sličice pregleda linka (UPLOADS_DIR/og/<id>.jpg) oglasa koji više nisu vidljivi (obrisan ili ne postoji).
+// Briše se samo ono što je starije od sat vremena; ako oglas ponovo bude traženo, sličica se opet pravi.
+async function removeStaleOg() {
+  const dir = path.join(UPLOADS_DIR, 'og');
+  const names = (await readdir(dir).catch(() => [])).filter((n) => /^\d+\.jpg$/.test(n));
+  for (let k = 0; k < names.length; k += 1000) {
+    const batch = names.slice(k, k + 1000);
+    const ids = batch.map((n) => Number(n.slice(0, -4)));
+    const live = new Set((await q('select id from listings where id = any($1::bigint[]) and deleted_at is null', [ids])).rows.map((r) => String(r.id)));
+    for (const n of batch) {
+      if (live.has(n.slice(0, -4))) continue;
+      const st = await stat(path.join(dir, n)).catch(() => null);
+      if (st && st.mtimeMs < Date.now() - 60 * MIN) {
+        await unlink(path.join(dir, n)).catch(() => {});
+        app.log.info(`Obrisana sličica oglasa koji nije vidljiv: og/${n}`);
+      }
+    }
+  }
+}
+
 /* ---------- pokretanje ---------- */
 
 // Pokreće sve poslove i vraća tajmere (src/server.js ih gasi pri zaustavljanju).
@@ -159,5 +282,17 @@ export function pokreniPoslove() {
   every(20 * 1000, checkVideos, 'Provjera snimaka nije uspjela');
   every(MIN, notifyUnread, 'Slanje emaila o nepročitanim porukama nije uspjelo');
   every(10 * MIN, cleanup, 'Čišćenje nije uspjelo');
+  const ocjene = () => izracunajOcjene().then((r) => {
+    app.log.info(`base_score: ${r.oglasa} oglasa, promijenjeno ${r.promijenjeno}, r_avg ${r.rAvg.toFixed(4)}`);
+  });
+  ocjene().catch((err) => app.log.error(err, 'Računanje base_score nije uspjelo'));
+  // KOMODO_SCORE_MS: samo za mjerenje (posao češće u prozoru testa opterećenja); zadano 5 minuta, najmanje 10 s.
+  const scoreMs = Math.max(10 * 1000, Number(process.env.KOMODO_SCORE_MS) || 5 * MIN);
+  every(scoreMs, ocjene, 'Računanje base_score nije uspjelo');
+  const brojke = () => izracunajDnevneBrojke().then((r) => {
+    app.log.info(`daily_stats: ${r.dani.join(', ')}`);
+  });
+  brojke().catch((err) => app.log.error(err, 'Računanje daily_stats nije uspjelo'));
+  every(15 * MIN, brojke, 'Računanje daily_stats nije uspjelo');
   return timers;
 }

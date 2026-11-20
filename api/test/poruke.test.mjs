@@ -42,7 +42,7 @@ describe('razgovor', () => {
     // Oglas drugog butika se ne veže za ovaj razgovor.
     await kupac.post('/api/conversations', { shop: butik.handle, listingId: oglasDrugog.id });
     const m = await kupac.get(`/api/conversations/${razgovor}/messages`);
-    assert.deepEqual(m.body.oglas, { id: oglas.id, title: 'Haljina za poruke', price: 45 });
+    assert.deepEqual(m.body.oglas, { id: oglas.id, title: 'Haljina za poruke', price: 45, sizes: [] });
     assert.equal(m.body.sagovornik.handle, butik.handle);
     assert.equal(m.body.sagovornik.butik, true);
   });

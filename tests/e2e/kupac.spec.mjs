@@ -19,37 +19,31 @@ test('kupac: registracija, sviđanje, profil butika i poruka', async ({ page, co
   await page.goto(`/?o=${oglas.id}`);
   await expect(page.locator(`.card[data-id="${oglas.id}"]`)).toBeVisible();
 
-  // Sviđanje bez prijave vodi na prijavu.
+  // Sviđanje bez prijave otvara „Novi nalog” s tekstom prema radnji (U-04).
   await page.locator(`.card[data-id="${oglas.id}"] [data-act="like"]`).click();
   await expect(page.locator('#authForm')).toBeVisible();
-  await expect(page.locator('#toast')).toContainText('Prijavi se');
-
-  // Registracija.
-  await page.locator('#authSwitch').click();
+  await expect(page.locator('#authTitle')).toHaveText('Novi nalog');
+  await expect(page.locator('#authLead')).toHaveText('Napravi besplatan nalog da sačuvaš ovaj oglas.');
   await expect(page.locator('#authShopField')).toBeVisible();
+
+  // Registracija; poslije nje se sviđanje izvršava samo (vidi i oglas.spec.mjs).
   await page.locator('#aShop').fill('Ana Kupac');
   await page.locator('#aEmail').fill('ana.kupac@e2e.ba');
   await page.locator('#aPass').fill(LOZINKA);
   await page.locator('#authSubmit').click();
-  await expect(page.locator('#me')).toBeVisible();
-  await expect(page.locator('#toast')).toHaveText('Nalog je napravljen.');
-  await expect(page.locator('#pHandle')).toHaveText('ana.kupac@e2e.ba');
-  await expect(page.locator('#tabPost')).toBeHidden();
-
-  // Feed i sviđanje (ponovo preko linka oglasa, iz istog razloga kao gore).
-  await page.goto(`/?o=${oglas.id}`);
+  await expect(page.locator('#feed')).toBeVisible();
   const card = page.locator(`.card[data-id="${oglas.id}"]`);
   await expect(card).toBeVisible();
   await expect(card.locator('.title')).toHaveText('Svilena bluza za kupca');
   const heart = card.locator('[data-act="like"]');
-  await expect(heart).toHaveAttribute('aria-pressed', 'false');
-  const likeOdgovor = page.waitForResponse((r) => r.url().endsWith(`/api/listings/${oglas.id}/like`));
-  await heart.click();
-  expect((await likeOdgovor).status()).toBe(200);
   await expect(heart).toHaveAttribute('aria-pressed', 'true');
   await expect(heart.locator('.n')).toHaveText('1');
   const stanje = await (await context.request.get(`/api/likes?ids=${oglas.id}`)).json();
   expect(stanje.svidjanja[oglas.id]).toEqual({ likes: 1, liked: true });
+  await otvoriProfil(page);
+  await expect(page.locator('#me')).toBeVisible();
+  await expect(page.locator('#pHandle')).toHaveText('ana.kupac@e2e.ba');
+  await expect(page.locator('#tabPost')).toBeHidden();
 
   // Oglas je u „Sviđa mi se” na profilu.
   await otvoriProfil(page);

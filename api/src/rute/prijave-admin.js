@@ -2,8 +2,10 @@
 import { q } from '../db.js';
 import { createShop } from '../nalog.js';
 import { mediaUrls } from '../video.js';
+import statistika from './statistika.js';
+import { ocistiKesFeeda } from './feed.js';
 import {
-  MIN, REPORT_REASONS, VIDEO_COLS, bad, currentUser, forgetUser, isAdmin, isId, limited, myConversation,
+  MIN, REPORT_REASONS, VIDEO_COLS, VISIBLE_SQL, clean, bad, currentUser, forgetUser, isAdmin, isId, limited, myConversation,
   removeListingFiles,
 } from '../app.js';
 
@@ -14,6 +16,8 @@ async function adminUser(req, reply) {
 }
 
 export default function rute(app) {
+  statistika(app);   // GET /api/me/stats i GET /api/admin/stats (rute/statistika.js)
+
   /* ---------- prijave sadržaja ---------- */
 
   app.get('/api/report-reasons', async () => ({ razlozi: REPORT_REASONS }));
@@ -25,7 +29,8 @@ export default function rute(app) {
     const body = req.body || {};
     const reason = REPORT_REASONS.includes(body.reason) ? body.reason : 'Ostalo';
     if (isId(body.listingId)) {
-      const l = await q('select 1 from listings where id = $1 and deleted_at is null', [Number(body.listingId)]);
+      // R-04: oglas u obradi (Bunny) ili obrisan prijavljivaču ne postoji.
+      const l = await q(`select 1 from listings l where l.id = $2 and l.deleted_at is null and ${VISIBLE_SQL}`, [user.id, Number(body.listingId)]);
       if (l.rowCount === 0) return bad(reply, 404, 'Ovaj oglas ne postoji ili je obrisan.');
       await q('insert into reports(reporter_id, listing_id, reason) values ($1, $2, $3)', [user.id, Number(body.listingId), reason]);
       return reply.code(201).send({ ok: true });
@@ -93,12 +98,18 @@ export default function rute(app) {
     return { ok: true };
   });
 
+  // U-15: ?q= (najviše 60 znakova) traži po imenu i emailu; % i _ (i \\) se escape-uju, pa su obični znakovi.
   app.get('/api/admin/users', async (req, reply) => {
     if (!(await adminUser(req, reply))) return reply;
+    const term = clean(req.query.q, 60);
+    const pattern = term ? `%${term.replace(/[\\%_]/g, '\\$&')}%` : null;
     const res = await q(
       `select u.id, u.shop_name, u.handle, u.email, u.role, u.suspended_at, u.created_at,
               (select count(*) from listings l where l.user_id = u.id and l.deleted_at is null) as oglasa
-         from users u order by (u.role = 'butik') desc, u.created_at desc limit 500`,
+         from users u
+        where ($1::text is null or u.shop_name ilike $1 escape '\\' or u.email ilike $1 escape '\\')
+        order by (u.role = 'butik') desc, u.created_at desc limit 500`,
+      [pattern],
     );
     return {
       nalozi: res.rows.map((u) => ({
@@ -134,6 +145,7 @@ export default function rute(app) {
     if (res.rowCount === 0) return bad(reply, 404, 'Ovaj nalog ne postoji.');
     if (suspended) await q('delete from sessions where user_id = $1', [id]);
     forgetUser(id);
+    ocistiKesFeeda(); // R2-03: oglasi ugašenog (ili vraćenog) butika odmah iz/u feed i pregled linka, svi procesi
     return { ok: true, suspended };
   });
 }

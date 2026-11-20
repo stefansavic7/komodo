@@ -20,7 +20,17 @@ Počinje s buticima u Banjoj Luci. Vlasnik je Stefan; odvojen proizvod od Termin
 - Poslije izmjene pokrenuti API i kliknuti kroz tok: otvaranje butika → objava → sviđanje → kontakt → brisanje.
 - `api/.env` i `api/uploads/` se nikad ne commituju niti šalju u chat.
 
-## Stanje (13.11.2026.)
+## Stanje (20.11.2026.)
+- v1 funkcije F-01 … F-09 su urađene (spisak i kriteriji: `docs/SPEC-V1.md`): feed „Za tebe/Novo/Praćeni”, pregled
+  linka pri dijeljenju (OG), veličine i filter, praćenje butika, profil i radno vrijeme, statistika butika,
+  sniženja s pushom, poruke (brza pitanja), brojke administratora.
+- Migracije su do 012 (`012_ocjene_i_cijena.sql`: `listing_scores`, `listings.price_set_at`); **sljedeća je 013**. Plan do produkcije je u `docs/PLAN-PRODUKCIJA.md`, stanje i redoslijed
+  preostalog posla u `docs/NASTAVAK.md` (ako postoji), nalazi recenzija u `docs/RECENZIJA-1.md` i `docs/RECENZIJA-2.md` (stanje popravki na kraju).
+- Testovi: 222 API testa, test istovremenosti, Playwright e2e, `mobile/navigacija.test.mjs` (`docs/TESTOVI.md`).
+- Struktura koda: `docs/ARHITEKTURA.md`; server i Nginx: `docs/SERVER.md`, `server/nginx-komodo.conf`; kako vratiti verziju
+  i bazu: `docs/RUNBOOK.md`.
+
+## Stanje iz ranijih etapa (13.11.2026.)
 Urađeno (etapa 1, isprobano u pregledniku): feed s kategorijama, pretragom i rasponom cijene; javni profil butika;
 objava videa (samo butik); izmjena oglasa i oznaka „prodato”; broj pregleda (vidi ga vlasnik); sviđanja; poruke
 kupac–butik sa značkom nepročitanih, blokiranjem i prijavom; prijava oglasa; administracija (`ADMIN_EMAILS`):
@@ -28,7 +38,7 @@ prijave, otvaranje butika, gašenje naloga; potvrda emaila, zaboravljena lozinka
 učestalosti (prijava, registracija, poruke, prijave); email butiku za poruku nepročitanu 15 minuta; logo i ikonice;
 nacrti uslova korištenja i politike privatnosti (`web/uslovi.html`, `web/privatnost.html`).
 
-Migracije 009 (v1 šema) i 010 (sigurnost) su dodane; sljedeća migracija ima broj 011. Produkcija (`NODE_ENV=production`) traži `SMTP_URL`, `COOKIE_SECRET` i `APP_URL`, bez prva dva API ne starta.
+Migracije 009 (v1 šema) i 010 (sigurnost) su dodane (kasnije do 011, vidi gore). Produkcija (`NODE_ENV=production`) traži `SMTP_URL`, `COOKIE_SECRET` i `APP_URL`, bez prva dva API ne starta.
 
 Otvoreno:
 - Uslovi i privatnost su nacrti: upisati operatera i kontakt, dati pravniku.

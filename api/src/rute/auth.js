@@ -7,6 +7,16 @@ import {
   knownDeviceId, limited, publicUser, sendVerification, startSession,
 } from '../app.js';
 
+// S-04 / R-08: uređaj s kog je nalog napravljen, prijavljen ili mu je postavljena nova lozinka je „poznat”,
+// pa ga ograničenje prijave po emailu (napad s tuđih adresa) ne zaključava.
+async function zapamtiUredjaj(userId, req, reply) {
+  await q(
+    `insert into known_devices(user_id, did) values ($1, $2)
+     on conflict (user_id, did) do update set seen_at = now()`,
+    [userId, deviceId(req, reply)],
+  );
+}
+
 export default function rute(app) {
   app.post('/api/auth/register', async (req, reply) => {
     // Mobilni operateri dijele jednu IP adresu na mnogo ljudi (CGNAT), pa je ograničenje po IP široko,
@@ -39,6 +49,7 @@ export default function rute(app) {
       throw err;
     }
     if (mailOn) await sendVerification(req.log, user);
+    await zapamtiUredjaj(user.id, req, reply);
     await startSession(reply, user.id);
     return reply.code(201).send({ korisnik: publicUser(user) });
   });
@@ -61,11 +72,7 @@ export default function rute(app) {
       return bad(reply, 401, 'Email ili lozinka nisu tačni.');
     }
     if (user.suspended_at) return bad(reply, 403, 'Ovaj nalog je ugašen. Javi nam se ako misliš da je greška.');
-    await q(
-      `insert into known_devices(user_id, did) values ($1, $2)
-       on conflict (user_id, did) do update set seen_at = now()`,
-      [user.id, deviceId(req, reply)],
-    );
+    await zapamtiUredjaj(user.id, req, reply);
     // Stari scrypt zapis (N=2^14) se prepisuje u novi; ne zadržava odgovor.
     if (needsRehash(user.password_hash)) {
       hashPassword(password)
@@ -156,6 +163,7 @@ export default function rute(app) {
     );
     await q('delete from sessions where user_id = $1', [userId]);
     forgetUser(userId);
+    await zapamtiUredjaj(userId, req, reply);
     await startSession(reply, userId);
     const user = await q('select * from users where id = $1', [userId]);
     return { korisnik: publicUser(user.rows[0]) };

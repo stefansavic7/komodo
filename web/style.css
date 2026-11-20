@@ -225,3 +225,35 @@ a.link{display:inline}
 .gate-box h2{margin:0;font:700 26px/1.15 var(--display);text-wrap:balance}
 .gate-box p{margin:0;color:var(--muted)}
 .gate-box .mark{width:56px;height:56px;border-radius:14px}
+
+/* ---------- F-01: kartice feeda, razdjelnik, uputa za prevlačenje (U-12) ---------- */
+.ftabs{display:flex;align-items:center;gap:2px;min-width:0}
+.ftab{position:relative;min-height:44px;padding:0 9px;font:700 16px/1 var(--body);color:var(--muted);white-space:nowrap;text-shadow:0 1px 8px rgba(0,0,0,.5)}
+.ftab[aria-pressed="true"]{color:var(--text)}
+.ftab[aria-pressed="true"]::after{content:"";position:absolute;left:9px;right:9px;bottom:7px;height:2px;border-radius:2px;background:var(--text)}
+.razdjelnik .empty-box h2{font-size:20px}
+.uputa{position:absolute;left:50%;top:46%;z-index:6;transform:translate(-50%,-50%);display:grid;justify-items:center;gap:8px;padding:16px 20px;border-radius:18px;background:rgba(22,18,26,.72);color:var(--text);font:600 16px/1.3 var(--body);text-align:center;pointer-events:none;max-width:260px}
+.uputa svg{width:34px;height:34px;animation:uputa-gore 1.2s ease-in-out infinite}
+@keyframes uputa-gore{0%,100%{transform:translateY(6px);opacity:.6}50%{transform:translateY(-6px);opacity:1}}
+@media (prefers-reduced-motion:reduce){.uputa svg{animation:none}}
+
+/* ---------- P4: veličine, sniženje, „Prati”, „Više” ---------- */
+.sizes{display:flex;flex-wrap:wrap;gap:8px}
+.size-btn{min-width:44px;min-height:44px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:700 15px/1 var(--body)}
+.size-btn[aria-pressed="true"]{background:var(--text);color:var(--ink);border-color:var(--text)}
+.vel-filter{display:grid;gap:8px}
+.sizes-row{flex-wrap:wrap}
+.sizes-scroll{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.sizes-scroll::-webkit-scrollbar{display:none}
+.sizes-scroll .size-btn{flex:0 0 auto}
+.icon-btn{position:relative}
+.icon-btn .dot{position:absolute;top:6px;right:6px;width:9px;height:9px;border-radius:50%;background:var(--accent)}
+.vtab{flex:0 0 auto;padding:8px 13px;border-radius:999px;font:700 14px/1 var(--body);background:var(--accent);color:var(--ink);border:1px solid var(--accent)}
+.vel{margin:0;font:600 14px/1.2 var(--body);color:var(--text);text-shadow:0 1px 8px rgba(0,0,0,.5)}
+.old-price{font:500 16px/1 var(--body);color:var(--muted);font-variant-numeric:tabular-nums}
+.drop{font:700 12px/1 var(--body);text-transform:uppercase;letter-spacing:.06em;padding:6px 8px;border-radius:6px;background:var(--accent);color:var(--ink)}
+.seller-row{display:flex;align-items:center;gap:8px}
+.follow-btn{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid rgba(247,241,234,.4);background:rgba(22,18,26,.6);color:var(--text);font:700 14px/1 var(--body)}
+.follow-btn[aria-pressed="true"]{background:var(--text);color:var(--ink);border-color:var(--text)}
+.more-menu .btn{min-height:48px}
+.sheet .more-menu{gap:10px}

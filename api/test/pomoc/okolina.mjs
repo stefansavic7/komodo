@@ -56,6 +56,11 @@ export async function novaBaza(prefix = 'komodo_test') {
   }
   const url = dbUrl(name);
   const pool = new pg.Pool({ connectionString: url, max: 3 });
+  // Uzrok nestabilnosti: pg-pool `end()` se završi čim pozove `client.end()` na vezama u mirovanju, tj. prije
+  // nego što se utičnica stvarno zatvori. `drop database … with (force)` odmah poslije toga prekine te veze
+  // („terminating connection due to administrator command”), pool emituje 'error', a bez rukovaoca Node to
+  // smatra neobrađenom greškom i obara cijeli test proces. Zato rukovalac postoji i greška se ignoriše.
+  pool.on('error', () => {});
   return {
     name,
     url,
@@ -63,7 +68,9 @@ export async function novaBaza(prefix = 'komodo_test') {
     q: (text, params) => pool.query(text, params),
     async drop() {
       await pool.end().catch(() => {});
+      await new Promise((r) => setTimeout(r, 50)); // da se veze iz poola stvarno zatvore prije prisilnog brisanja
       const c = new pg.Client({ connectionString: ADMIN_URL });
+      c.on('error', () => {});
       await c.connect();
       try {
         await c.query(`drop database if exists ${name} with (force)`);

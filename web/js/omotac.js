@@ -34,7 +34,7 @@ $('#pushToggle').addEventListener('change', function () {
   var on = $('#pushToggle').checked;
   api('PATCH', '/api/me', { pushEnabled: on }).then(function (d) {
     me = d.korisnik;
-    toast(on ? 'Obavještenja o porukama su uključena.' : 'Obavještenja o porukama su isključena.');
+    toast(on ? 'Obavještenja o porukama i sniženjima su uključena.' : 'Obavještenja o porukama i sniženjima su isključena.');
   }).catch(function (err) { $('#pushToggle').checked = !on; toast(err.message, true); });
 });
 
@@ -60,6 +60,14 @@ function versionLess(a, b) {
   }
   return false;
 }
+// R-03: pravi link prodavnice ili undefined. Bez znakova < > " ' i razmaka; App Store: apps.apple.com/[xx/]app/...,
+// Google Play: play.google.com/store/apps/details?id=...
+function validStoreUrl(u) {
+  if (typeof u !== 'string' || /[<>"'\s]/.test(u)) { return undefined; }
+  if (/^https:\/\/apps\.apple\.com\/([a-z]{2}\/)?app\/[A-Za-z0-9._~%\/-]+$/.test(u)) { return u; }
+  if (/^https:\/\/play\.google\.com\/store\/apps\/details\?id=[A-Za-z0-9._]+(&[A-Za-z0-9._=%-]+)*$/.test(u)) { return u; }
+  return undefined;
+}
 // Samo u omotaču (window.KOMODO_APP). Vraća Promise<true> ako je ova verzija aplikacije prestara i prikazan je blokirajući ekran.
 function checkAppVersion() {
   var app = window.KOMODO_APP;
@@ -69,8 +77,11 @@ function checkAppVersion() {
   }).then(function (cfg) {
     var rule = cfg && cfg[app.platform];
     if (!rule || !rule.min || !versionLess(app.version, rule.min)) { return false; }
-    var url = /^https:\/\/(apps\.apple\.com|play\.google\.com)\//.test(rule.url || '') ? rule.url : undefined;
+    var url = validStoreUrl(rule.url);
     $('#updateGate').hidden = false;
+    // R-03 / R2-04: neispravna adresa (npr. ostala je oznaka <APP_STORE_ID>) se nikad ne šalje; dugme ostaje i
+    // šalje { type: 'update' } bez adrese, a omotač otvara svoju rezervnu adresu prodavnice (storeUrl u
+    // mobile/App.js: market:// na Androidu, pretraga App Storea na iOS-u).
     $('#gateGo').onclick = function () { toApp(url ? { type: 'update', url: url } : { type: 'update' }); };
     $('#gateGo').focus();
     return true;

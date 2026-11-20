@@ -22,6 +22,13 @@ var viewsBatch = null;                       // null: ne znamo; false: server ne
 var MAX_VIEW_QUEUE = 500, VIEWS_PER_REQUEST = 50;
 var currentId = null;                        // oglas koji je trenutno na ekranu u feedu
 var likeBusy = {};                           // oglasi čije je sviđanje upravo u slanju
+// Feed (docs/SPEC-V1.md, F-01): kartica 'zatebe' | 'novo' | 'praceni'; karticaRucno = korisnik ju je sam izabrao
+// (inače: kupac i neprijavljen „Za tebe”, butik „Novo” jer svoje oglase ne vidi u „Za tebe”).
+var kartica = 'zatebe', karticaRucno = false;
+var shownIds = [];                           // id-jevi prikazani u „Za tebe” (izuzmi, najviše zadnjih 200)
+var zaTebeKraj = false, novoBefore = null;   // poslije kraja „Za tebe” feed nastavlja stranama „Novo”
+var hiddenAt = 0;                            // kad je stranica sakrivena (povratak poslije 30 min osvježava feed)
+var LIKES_EVERY = 30000, likesAt = 0;        // B-01: sviđanja oglasa na ekranu najviše svakih 30 s
 var pItems = [], pPages = 0, pMoreOn = false, pBusy = false;   // mreža na vlastitom profilu
 var vItems = [], vShop = null, vMoreOn = false, vBusy = false;  // mreža na javnom profilu butika
 function pageVisible() { return document.visibilityState === 'visible'; }
@@ -30,6 +37,7 @@ var inApp = !!window.ReactNativeWebView;     // radi li unutar mobilne aplikacij
 var pushToken = null;
 
 function $(s) { return document.querySelector(s); }
+var ftabs = $('#ftabs'), uputa = $('#uputa');
 var feed = $('#feed'), topbar = $('#topbar'), profile = $('#profile'), chips = $('#chips'), tabs = $('#tabs');
 var brand = $('#brand'), shopbar = $('#shopbar'), shopView = $('#shopView'), inbox = $('#inbox'), chat = $('#chat'), admin = $('#admin');
 var editSheet = $('#editSheet'), reportSheet = $('#reportSheet');

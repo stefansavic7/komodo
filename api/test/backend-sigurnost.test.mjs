@@ -128,11 +128,25 @@ describe('S-04 zaključavanje tuđeg naloga', () => {
     for (let i = 0; i < 31; i += 1) {
       const n = prod.klijent();
       const r = await n.post('/api/auth/login', { email: 'zrtva@test.ba', password: 'pogresna1' }, iza(n, `10.7.${i}.1`));
-      assert.equal(r.status, i < 29 ? 401 : 429, `pokušaj ${i + 1}`); // + 1 uspješna prijava vlasnika = 31
+      assert.equal(r.status, i < 30 ? 401 : 429, `pokušaj ${i + 1}`); // vlasnik je poznat od registracije (R-08), pa njegova prijava ne troši granicu
     }
     const nepoznat = prod.klijent();
     assert.equal((await nepoznat.post('/api/auth/login', { email: 'zrtva@test.ba', password: LOZINKA }, iza(nepoznat, '10.4.9.9'))).status, 429);
     const ok = await vlasnik.post('/api/auth/login', { email: 'zrtva@test.ba', password: LOZINKA }, iza(vlasnik, '10.4.0.2'));
+    assert.equal(ok.status, 200);
+  });
+
+  test('R-08: uređaj s kog je nalog napravljen je poznat i bez ijedne prijave', async () => {
+    const vlasnik = prod.klijent();
+    assert.equal((await vlasnik.post('/api/auth/register', { email: 'novi.r08@test.ba', password: LOZINKA, name: 'Novi R Nula Osam' }, iza(vlasnik, '10.5.0.1'))).status, 201);
+    await vlasnik.post('/api/auth/logout');
+    for (let i = 0; i < 31; i += 1) {
+      const n = prod.klijent();
+      await n.post('/api/auth/login', { email: 'novi.r08@test.ba', password: 'pogresna1' }, iza(n, `10.6.${i}.1`));
+    }
+    const nepoznat = prod.klijent();
+    assert.equal((await nepoznat.post('/api/auth/login', { email: 'novi.r08@test.ba', password: LOZINKA }, iza(nepoznat, '10.5.9.9'))).status, 429);
+    const ok = await vlasnik.post('/api/auth/login', { email: 'novi.r08@test.ba', password: LOZINKA }, iza(vlasnik, '10.5.0.2'));
     assert.equal(ok.status, 200);
   });
 
@@ -298,6 +312,21 @@ describe('S-12 provjera Origin', () => {
     const k = prod.klijent();
     assert.equal((await k.post('/api/auth/logout', {}, { headers: { origin: 'https://komodo.test' } })).status, 200);
     assert.equal((await k.post('/api/auth/logout', {}, { headers: { origin: 'https://komodo.test.zlo.ba' } })).status, 403);
+  });
+});
+
+describe('R-06 Origin i nestandardan port iza proxyja', () => {
+  // Nginx sada šalje `Host $http_host` (s portom). API poredi Origin s Host zaglavljem uključujući port.
+  const post = (host, origin) => new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port: Number(new URL(dev.url).port), path: '/api/auth/logout', method: 'POST',
+      headers: { host, origin, 'content-type': 'application/json', 'content-length': 2 } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    r.on('error', reject); r.end('{}');
+  });
+  test('Host s portom + Origin s istim portom prolazi; bez porta ili s drugim portom → 403', async () => {
+    assert.equal(await post('proba.local:8965', 'http://proba.local:8965'), 200);
+    assert.equal(await post('proba.local:8965', 'http://proba.local'), 403);
+    assert.equal(await post('proba.local:8965', 'http://proba.local:9999'), 403);
+    assert.equal(await post('proba.local', 'http://proba.local'), 200);
   });
 });
 

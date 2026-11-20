@@ -219,7 +219,7 @@ Popisano prema onome što API stvarno čuva (`api/migrations`, `api/src/server.j
 | Sviđanja, prijave, blokiranja | `likes`, `reports`, `blocks` | svi | funkcionalnost, moderacija |
 | Pregledi oglasa | `listing_views` (prijavljeni: korisnik; ostali: kolačić `did`) | svi | broj pregleda za butik |
 | ID uređaja `did` (nasumičan kolačić) | kolačić, `rate_limits` | svi | brojanje pregleda, zaštita od masovne registracije |
-| Expo push token | `push_tokens`, vezan za sesiju | ko dozvoli obavještenja | obavještenja o porukama |
+| Expo push token | `push_tokens`, vezan za sesiju | ko dozvoli obavještenja | obavještenja o porukama i sniženjima |
 | IP adresa | `rate_limits` (briše se poslije 2 h), zapisi servera | svi | sigurnost (ograničenje pokušaja) |
 
 Nema reklama, nema analitike trećih strana, nema praćenja među aplikacijama, nema lokacije.
@@ -395,9 +395,10 @@ U pregledniku `window.KOMODO_APP` ne postoji. User-Agent u aplikaciji završava 
 | Funkcija | Kada |
 |---|---|
 | `window.__komodoPush(token)` | dobijen Expo push token (postoji) |
-| `window.__komodoOpenChat(id)` | dodir na obavještenje dok aplikacija radi (postoji) |
+| `window.__komodoOpenChat(id)` | rezerva za dodir na obavještenje o poruci; omotač sada prvo koristi `__komodoOpenUrl('/?poruke=<id>')` |
+| `window.__komodoOpenListing(id)` | dodir na obavještenje o sniženju dok aplikacija radi: feed „Novo” s tim oglasom prvim. Bez funkcije: `location.href = /?o=<id>`. Hladan start: učitava se `/?o=<id>` |
 | `window.__komodoBack()` | Android dugme Nazad (postoji) |
-| `window.__komodoOpenUrl(path)` | **novo, nije obavezno**: link `komodo://` ili `https://komodo.ba/…` dok aplikacija radi; `path` je npr. `/?o=123`. Ako funkcije nema, omotač radi `location.href = …` (puno učitavanje). |
+| `window.__komodoOpenUrl(path)` | (postoji na webu) link `komodo://` ili `https://komodo.ba/…` dok aplikacija radi; `path` je npr. `/?o=123`. Ako funkcije nema, omotač radi `location.href = …` (puno učitavanje). |
 
 **Web šalje (`toApp`):**
 
@@ -437,7 +438,14 @@ aplikacija, ne marketinški sajt, i to ide u korist. Rizik ostaje jer recenzent 
 
 **Šta omotač radi nativno (stanje 19.11.):**
 
-- Push obavještenja o porukama; dodir otvara razgovor (i iz ugašene aplikacije); Android kanal „Poruke”, vlastita ikona.
+- Push obavještenja o porukama i sniženjima; dodir otvara razgovor odnosno oglas (i iz ugašene aplikacije); dva
+  Android kanala, „Poruke” (važnost HIGH, id `poruke`) i „Sniženja” (DEFAULT, id `snizenja`), vlastita ikona.
+  Oba kanala pravi omotač pri pokretanju (`setNotificationChannelAsync`), pa ih nema u `AndroidManifest.xml`;
+  u manifestu je samo `default_notification_channel_id = poruke`. Server za sniženja šalje `channelId` iz
+  `PUSH_SNIZENJA_KANAL`; zadano je `snizenja` (kanal „Sniženja”), pa se ne mora podešavati, osim ako se kanal preimenuje.
+  Podaci obavještenja: poruka `{conversationId}`, sniženje `{listingId}`. Dok je razgovor otvoren, njegova
+  poruka se ne prikazuje kao baner; sniženje se prikazuje uvijek. Data safety / App Privacy se **ne mijenjaju**:
+  isti Expo push token, isti razlog (App functionality), sniženja ne uvode nove podatke.
 - Sistemski meni za dijeljenje oglasa.
 - Kamera i galerija za snimanje/biranje videa (sistemski izbornik).
 - Deep link `komodo://` i universal/app links za `komodo.ba`.
@@ -472,6 +480,15 @@ Ništa od ovoga nije provjereno na uređaju. Na Android (preview APK) i iPhone (
       `KeyboardAvoidingView` u `App.js` (znači da WebView sam pomjera sadržaj).
 - [ ] Push: prijava → dozvola → poruka s drugog naloga stiže; dodir otvara razgovor (aplikacija u pozadini i ugašena).
       Odjava → nova poruka **ne** stiže na taj telefon.
+- [ ] Sniženje (server: `PUSH_SNIZENJA_KANAL=snizenja`; kupac je lajkovao oglas, butik snizi cijenu): push stiže na kanal
+      „Sniženja” (Android: Podešavanja → Aplikacije → Komodo → Obavještenja prikazuje **dva** kanala, Poruke i Sniženja);
+      dodir otvara feed „Novo” s tim oglasom prvim — aplikacija u prvom planu, u pozadini i ugašena (hladan start),
+      i to samo **jednom** (bez dvostrukog otvaranja ni treperenja).
+- [ ] Baner u prvom planu: dok je otvoren razgovor A, poruka iz A se ne pokazuje, poruka iz razgovora B da;
+      sniženje se pokazuje uvijek, i usred razgovora.
+- [ ] Link dok aplikacija radi (npr. `adb shell am start -a android.intent.action.VIEW -d "komodo://o/123"`, iPhone:
+      Safari → `komodo://o/123`): oglas se otvara bez ponovnog učitavanja stranice (nema splasha); isto `komodo://b/<butik>`
+      i `komodo://poruke/<id>`. Hladan start iz linka otvara isti sadržaj.
 - [ ] Profil butika: telefon otvara poziv, Viber link Viber (ili poruku da nije instaliran), Instagram svoju aplikaciju.
 - [ ] Dijeljenje oglasa otvara sistemski meni; poslani link otvara aplikaciju (kad postoje fajlovi iz odjeljka 8).
 - [ ] Uslovi i privatnost otvaraju preglednik, povratak u aplikaciju radi.
