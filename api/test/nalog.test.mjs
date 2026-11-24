@@ -278,7 +278,8 @@ describe('brisanje naloga', () => {
     assert.equal(r.status, 200);
     assert.equal((await k.get('/api/me')).body.korisnik, null);
     assert.equal((await b.get(`/api/listings/${oglas.id}`)).body.oglas.likes, 1);
-    const red = await o.baza.q('select likes_count, (select count(*)::int from likes where listing_id = $1) as n from listings where id = $1', [oglas.id]);
+    // Talas 4: likes_count + nesabrane razlike (listing_likes_delta) = broj redova u likes.
+    const red = await o.baza.q('select (likes_count + coalesce((select sum(delta) from listing_likes_delta where listing_id = $1), 0))::int as likes_count, (select count(*)::int from likes where listing_id = $1) as n from listings where id = $1', [oglas.id]);
     assert.equal(red.rows[0].likes_count, red.rows[0].n);
     assert.equal((await o.klijent().post('/api/auth/login', { email: 'brisem@test.ba', password: LOZINKA })).status, 401);
     // Email je ponovo slobodan.

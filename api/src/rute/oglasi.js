@@ -9,10 +9,11 @@ import { q } from '../db.js';
 import { bunnyOn } from '../video.js';
 import {
   CATEGORIES, LISTING_SELECT, MAX_VIDEO_MB, MIN, SIZES, UPLOADS_DIR, VIDEO_COLS, VIDEO_EXT, bad,
-  clean, cleanLine, currentUser, inTransaction, isId, limited, parsePrice, publicListing, removeListingFiles,
+  clean, cleanLine, currentUser, idempotentno, inTransaction, isId, limited, parsePrice, publicListing, removeListingFiles,
 } from '../app.js';
 import { sendToBunny } from '../poslovi.js';
-import { obavijestiOSnizenju } from '../snizenje.js';
+import { zakaziSnizenje } from '../snizenje.js';
+import { obradiUskoro } from '../outbox.js';
 import feed, { ocistiKesFeeda, stranaOglasa } from './feed.js';
 
 // S-11: provjera sadržaja snimka po prvim bajtovima (klijent sam bira mimetype). MP4/MOV: kutija na
@@ -68,20 +69,21 @@ export default function rute(app) {
 
   // Pretraga, profil butika, „Sviđa mi se” i stari klijenti (feed redom id desc). Logika je zajednička s
   // karticom „Novo” (src/rute/feed.js, stranaOglasa).
-  app.get('/api/listings', async (req) => {
+  app.get('/api/listings', async (req, reply) => {
     const user = await currentUser(req);
-    return stranaOglasa(user, req.query);
+    return stranaOglasa(user, req.query, () => { reply.header('X-Komodo-Zastarjelo', '1'); });
   });
 
   app.get('/api/listings/:id', async (req, reply) => {
     if (!isId(req.params.id)) return bad(reply, 404, 'Ovaj oglas ne postoji.');
     const user = await currentUser(req);
-    const res = await q(`${LISTING_SELECT} and l.id = $2`, [user ? user.id : 0, Number(req.params.id)]);
+    const res = await q({ name: 'oglas-jedan', text: `${LISTING_SELECT} and l.id = $2`, values: [user ? user.id : 0, Number(req.params.id)] });
     if (res.rowCount === 0) return bad(reply, 404, 'Ovaj oglas ne postoji ili je obrisan.');
     return { oglas: publicListing(res.rows[0]) };
   });
 
-  app.post('/api/listings', async (req, reply) => {
+  // Idempotency-Key (talas 4): ponovljena objava (pukla veza poslije uploada) ne pravi drugi oglas.
+  app.post('/api/listings', idempotentno('objava', async (req, reply) => {
     const user = await currentUser(req);
     if (!user) return bad(reply, 401, 'Prijavi se da objaviš oglas.');
     if (user.role !== 'butik') return bad(reply, 403, 'Oglase objavljuju samo butici. Javi nam se da ti otvorimo butik.');
@@ -152,7 +154,7 @@ export default function rute(app) {
     ocistiKesFeeda(); // svi procesi (poruka preko src/index.js)
     const res = await q(`${LISTING_SELECT} and l.id = $2`, [user.id, ins.rows[0].id]);
     return reply.code(201).send({ oglas: publicListing(res.rows[0]) });
-  });
+  }));
 
   // Izmjena oglasa: naziv, cijena, kategorija i oznaka „prodato”. Video se ne mijenja.
   app.patch('/api/listings/:id', async (req, reply) => {
@@ -209,17 +211,17 @@ export default function rute(app) {
       );
       // R2-07: push samo ako je cijena prije ove izmjene važila bar 72 h (zaštita od „digni pa spusti”);
       // precrtana cijena (old_price_cents) se upisuje po starom pravilu.
-      if (pad && !sold && r.video_status === 'ready' && r.cijena_stara) okini = { oldCents, newCents: priceCents };
+      if (pad && !sold && r.video_status === 'ready' && r.cijena_stara) {
+        okini = { oldCents, newCents: priceCents };
+        // Talas 4: obavještenje ide u outbox u istoj transakciji; šalje ga posao (src/outbox.js), PATCH ne čeka.
+        await zakaziSnizenje(c, { listingId: id, shopId: user.id, shopName: user.shop_name, title, ...okini });
+      }
       return res;
     });
     if (!upd) return bad(reply, 404, 'Ovaj oglas ne postoji ili nije tvoj.');
     ocistiKesFeeda();
+    if (okini) obradiUskoro(req.log); // sniženje čeka u outboxu; prolaz odmah, ne čeka se
     const res = await q(`${LISTING_SELECT} and l.id = $2`, [user.id, upd.rows[0].id]);
-    if (okini) {
-      // Push u pozadini: PATCH ne čeka slanje.
-      const info = { listingId: id, shopId: user.id, shopName: user.shop_name, title, ...okini };
-      setImmediate(() => { obavijestiOSnizenju(req.log, info).catch((err) => req.log.warn(err, 'Obavještenje o sniženju')); });
-    }
     return { oglas: publicListing(res.rows[0]), obavijesteno: !!okini };
   });
 

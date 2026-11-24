@@ -65,7 +65,19 @@ BASE_URL=http://127.0.0.1:3910 DATABASE_URL=postgres://postgres@127.0.0.1:55432/
    ```
 
    Rute za `endpoint`: `feed_anon`, `feed_user`, `feed_page`, `feed_category`, `search`, `likes_poll`, `me`,
-   `like`, `view`, `conversations`, `shop`. Rasponi id-jeva: `LMIN`/`LMAX` (oglasi, zadano 1–10000),
+   `like`, `like_viral`, `view`, `conversations`, `shop`, `feed_zatebe_anon`, `feed_zatebe`, `feed_zatebe_cat`,
+   `feed_novo`, `feed_praceni`. `like_viral` (talas 4, „vruć brojač”): različiti kupci prekidačem označavaju ISTI
+   oglas (`VIRAL=<id>`, zadano `LMIN`) — porediti sa `like` (nasumični oglasi) na istom broju istovremenih:
+
+   ```bash
+   BASE_URL=http://127.0.0.1:3910 node test/opterecenje/opterecenje.mjs endpoint like 200 15
+   BASE_URL=http://127.0.0.1:3910 node test/opterecenje/opterecenje.mjs endpoint like_viral 200 15
+   ```
+
+   Izmjereno 24.11.2026. (2 jezgra, generator + API `WORKERS=2` + Postgres zajedno, 200 istovremenih, 15 s, dva
+   prolaza): prije (`update listings` po sviđanju) `like` 1.814 / 1.842 zahtjeva/s (p95 178 / 209 ms), `like_viral`
+   1.099 / 1.057/s (p95 289 / 360 ms; čekanje na red: `Lock:transactionid`); poslije (`listing_likes_delta`, talas 4)
+   `like` 1.698 / 1.763/s (p95 240 / 187 ms), `like_viral` 1.607 / 1.463/s (p95 199 / 230 ms). Rasponi id-jeva: `LMIN`/`LMAX` (oglasi, zadano 1–10000),
    `UMIN`/`UMAX` (kupci, zadano 101–10100), `BUTIKA` (zadano 100) — zadane vrijednosti odgovaraju
    `napuni-bazu.mjs` bez dodatnih opcija.
 

@@ -117,6 +117,7 @@ fVideo.addEventListener('change', function () {
     return;
   }
   clearPending();
+  objavaKljuc = null;   // novi snimak = nova objava
   pendingFile = f;
   pendingURL = URL.createObjectURL(f);
   preview.src = pendingURL; preview.hidden = false;
@@ -124,6 +125,7 @@ fVideo.addEventListener('change', function () {
   pickText.textContent = 'Promijeni video';
   postErr.textContent = '';
 });
+var objavaKljuc = null;
 postForm.addEventListener('submit', function (e) {
   e.preventDefault();
   if (uploading) { return; }
@@ -148,9 +150,13 @@ postForm.addEventListener('submit', function (e) {
   postSubmit.disabled = true; postSubmit.textContent = 'Šaljem…';
   progress.hidden = false;
 
+  // Idempotency-Key (talas 4): isti ključ dok se ne izabere drugi snimak ili objava ne uspije — ponovni pokušaj
+  // poslije pukle veze ne pravi drugi oglas ako je prvi ipak stigao.
+  if (!objavaKljuc) { objavaKljuc = noviKljuc(); }
   var xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/listings');
   xhr.withCredentials = true;
+  xhr.setRequestHeader('Idempotency-Key', objavaKljuc);
   xhr.upload.onprogress = function (ev) {
     if (ev.lengthComputable) { progressBar.style.width = Math.round(ev.loaded / ev.total * 100) + '%'; }
   };
@@ -163,8 +169,10 @@ postForm.addEventListener('submit', function (e) {
   xhr.onload = function () {
     var res = {};
     try { res = JSON.parse(xhr.responseText); } catch (err) {}
+    zabiljeziOdgovor(xhr.status, xhr.getResponseHeader('Retry-After'));
     if (xhr.status === 201) {
       uploading = false;
+      objavaKljuc = null;
       resetPost();
       postSheet.hidden = true;
       shop = null; brand.hidden = false; shopbar.hidden = true;

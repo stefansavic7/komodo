@@ -12,10 +12,10 @@ function show(view, keepFeed) {
   profile.hidden = view !== 'profile'; shopView.hidden = view !== 'shop';
   inbox.hidden = view !== 'inbox'; chat.hidden = view !== 'chat'; admin.hidden = view !== 'admin';
   if (view !== 'chat') { stopChat(); }
-  clearInterval(profileTimer); profileTimer = null;
-  clearInterval(feedTimer); feedTimer = null;
-  if (isFeed) { feedTimer = setInterval(refreshLikes, LIKES_EVERY); }
-  if (view === 'profile') { profileTimer = setInterval(refreshProfileGrid, 30000); }
+  profileTimer = staniTajmer(profileTimer);
+  feedTimer = staniTajmer(feedTimer);
+  if (isFeed) { feedTimer = tajmer('likes', refreshLikes); }
+  if (view === 'profile') { profileTimer = tajmer('profil', refreshProfileGrid); }
   var tabView = view === 'chat' ? 'inbox' : (view === 'admin' ? 'profile' : view);
   var ts = tabs.querySelectorAll('.tab');
   for (var k = 0; k < ts.length; k++) {
@@ -47,11 +47,11 @@ function setBadge(n) {
   b.textContent = n > 9 ? '9+' : String(n);
 }
 function refreshUnread() {
-  if (!me) { setBadge(0); return; }
-  api('GET', '/api/me').then(function (d) { if (d.korisnik) { setBadge(d.neprocitano); } }, function () {});
+  if (!me) { setBadge(0); return null; }
+  return api('GET', '/api/me').then(function (d) { if (d.korisnik) { setBadge(d.neprocitano); } }, function () {});
 }
 // Tajmer značke: samo dok je stranica vidljiva.
-function tickUnread() { if (pageVisible()) { refreshUnread(); } }
+function tickUnread() { return pageVisible() ? refreshUnread() : null; }
 
 // Poslije prijave ili odjave: dugme Objavi samo za butike, značka poruka, svjež feed i profil.
 function afterAuthChange() {
@@ -59,8 +59,8 @@ function afterAuthChange() {
   toApp({ type: 'ready', loggedIn: !!me });
   if (me) { toApp({ type: 'push' }); }
   $('#tabPost').hidden = !isShop();
-  clearInterval(unreadTimer); unreadTimer = null;
-  if (me) { unreadTimer = setInterval(tickUnread, 60000); }
+  unreadTimer = staniTajmer(unreadTimer);
+  if (me) { unreadTimer = tajmer('me', tickUnread); }
   refreshUnread();
   forgetFollows();   // skup praćenih butika (butik.js) vrijedi za jednog korisnika
   if (me) { ensureFollows(); }

@@ -1,7 +1,9 @@
 // Poruke kupac–butik: otvaranje razgovora, spisak razgovora, čitanje i slanje poruka, blokiranje.
 import { q } from '../db.js';
-import { MIN, UNREAD_SQL, VISIBLE_SQL, bad, clean, cleanLine, currentUser, isId, limited, myConversation } from '../app.js';
-import { pushNewMessage } from './push.js';
+import {
+  MIN, UNREAD_SQL, VISIBLE_SQL, bad, clean, cleanLine, currentUser, idempotentno, isId, limited, myConversation,
+} from '../app.js';
+import { obradiUskoro } from '../outbox.js';
 
 async function blockState(userId, otherId) {
   const res = await q(
@@ -91,7 +93,8 @@ export default function rute(app) {
     };
   });
 
-  app.post('/api/conversations/:id/messages', async (req, reply) => {
+  // Idempotency-Key (talas 4): ponovljeno slanje iste poruke (loša veza, dupli dodir) ne upisuje drugu poruku.
+  app.post('/api/conversations/:id/messages', idempotentno('poruka', async (req, reply) => {
     const user = await currentUser(req);
     if (!user) return bad(reply, 401, 'Prijavi se da pošalješ poruku.');
     if (!user.email_verified_at) return bad(reply, 403, 'Potvrdi email da bi slao poruke. Link ti je stigao na email, a novi tražiš u profilu.');
@@ -102,19 +105,27 @@ export default function rute(app) {
     if ((await blockState(user.id, otherId)).any) return bad(reply, 403, 'Ne možeš pisati u ovom razgovoru jer je blokiran.');
     const text = clean((req.body || {}).body, 1000);
     if (!text) return bad(reply, 400, 'Upiši poruku.');
+    // Talas 4: push primaocu ide u outbox u istoj naredbi kao poruka (samo ako primalac ima token i uključena
+    // obavještenja); šalje ga posao (src/outbox.js) u serijama, s ponovnim pokušajem. Odgovor ne čeka slanje.
     const ins = await q(
-      'insert into messages(conversation_id, sender_id, body) values ($1, $2, $3) returning id, created_at',
-      [conv.id, user.id, text],
+      `with m as (insert into messages(conversation_id, sender_id, body) values ($1, $2, $3) returning id, created_at),
+       o as (insert into outbox(vrsta, payload)
+             select 'poruka', jsonb_build_object('primalac', $4::int, 'naslov', $5::text, 'tekst', $6::text, 'razgovor', $1::int)
+              where exists (select 1 from push_tokens t join users u on u.id = t.user_id
+                             where t.user_id = $4 and u.push_enabled and u.suspended_at is null)
+             returning 1)
+       select id, created_at, (select count(*) from o)::int as push from m`,
+      [conv.id, user.id, text, otherId, cleanLine(user.shop_name, 40), text.length > 140 ? `${text.slice(0, 137)}…` : text],
     );
+    if (ins.rows[0].push) obradiUskoro(req.log);
     const mineCol = conv.customer_id === user.id ? 'customer_read_at' : 'shop_read_at';
     await q(`update conversations set last_message_at = now(), ${mineCol} = now() where id = $1`, [conv.id]);
     // F-06: kontakt = kupac je pisao iz oglasa (jednom po kupcu i oglasu; otvaranje bez poruke se ne broji).
     if (conv.customer_id === user.id && conv.listing_id) {
       await q('insert into listing_contacts(listing_id, customer_id) values ($1, $2) on conflict do nothing', [conv.listing_id, user.id]);
     }
-    pushNewMessage(req.log, otherId, cleanLine(user.shop_name, 40), text, conv.id).catch(() => {});
     return reply.code(201).send({ poruka: { id: ins.rows[0].id, body: text, mine: true, at: ins.rows[0].created_at } });
-  });
+  }));
 
   // Blokiranje sagovornika: dok traje, niko od dvoje ne može pisati u razgovoru.
   app.post('/api/conversations/:id/block', async (req, reply) => {

@@ -23,7 +23,59 @@ function renderAdmin() {
   }).catch(function (err) { $('#admReportsHint').textContent = err.message; });
   renderAdminStats();
   loadAdminUsers();
+  loadRezim();
 }
+
+/* ---------- režim rada („veliki crveni prekidač”, talas 4; docs/RUNBOOK.md) ---------- */
+
+var REZIM_OPIS = {
+  normalno: 'Normalno: svi tajmeri i lični „Za tebe”.',
+  stedi: 'Štedni: aplikacije osvježavaju 2–4 puta rjeđe. Za vrh prometa (reklama).',
+  hitno: 'Hitni: „Za tebe” postaje „Novo”, pregledi se ne broje, sve se osvježava najviše svakih 5 min, razgovor svakih 15 s.'
+};
+// Ugrađuje se na kraju fajla (poslije „Brojke”), ispod brojki.
+function ugradiRezim() {
+  var box = document.createElement('section');
+  box.id = 'admRezim'; box.className = 'adm-stats';
+  box.innerHTML = '<h2>Režim rada</h2><p class="hint" id="admRezimHint">Učitavam…</p>' +
+    '<div class="p-row" role="group" aria-label="Režim rada">' +
+    '<button type="button" class="btn" data-rezim="normalno" aria-pressed="false">Normalno</button>' +
+    '<button type="button" class="btn" data-rezim="stedi" aria-pressed="false">Štedni</button>' +
+    '<button type="button" class="btn btn-danger" data-rezim="hitno" aria-pressed="false">Hitni</button></div>' +
+    '<button type="button" class="btn" id="admRezimOkolina">Vrati na podešavanje servera</button>';
+  var stats = $('#admStats');
+  admin.insertBefore(box, stats ? stats.nextSibling : $('#adminBack').nextSibling);
+  $('#admRezim').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-rezim]');
+    if (b) {
+      var r = b.getAttribute('data-rezim');
+      if (r === 'hitno') {
+        confirmAction({ title: 'Uključiti hitni režim?', text: REZIM_OPIS.hitno, ok: 'Uključi' }, function () { setRezim('hitno'); });
+      } else { setRezim(r); }
+      return;
+    }
+    if (e.target.closest('#admRezimOkolina')) { setRezim(null); }
+  });
+}
+function paintRezim(d) {
+  var bs = document.querySelectorAll('#admRezim [data-rezim]');
+  for (var k = 0; k < bs.length; k++) {
+    var on = bs[k].getAttribute('data-rezim') === d.rezim;
+    bs[k].setAttribute('aria-pressed', on ? 'true' : 'false');
+    bs[k].classList.toggle('btn-main', on && d.rezim !== 'hitno');
+  }
+  $('#admRezimHint').textContent = 'Sada: ' + REZIM_OPIS[d.rezim] + ' Podešavanje servera (KOMODO_REZIM): ' + d.okolina + '. Klijenti ga vide za najviše ~1 min.';
+}
+function loadRezim() {
+  api('GET', '/api/admin/rezim').then(paintRezim).catch(function (err) { $('#admRezimHint').textContent = err.message; });
+}
+function setRezim(r) {
+  api('POST', '/api/admin/rezim', { rezim: r }).then(function (d) {
+    paintRezim(d);
+    toast('Režim rada: ' + d.rezim + '.');
+  }).catch(function (err) { toast(err.message, true); });
+}
+
 
 /* ---------- brojke (F-09) ---------- */
 
@@ -120,3 +172,4 @@ $('#admShopForm').addEventListener('submit', function (e) {
 });
 $('#adminOpen').addEventListener('click', function () { show('admin'); });
 $('#adminBack').addEventListener('click', function () { show('profile'); });
+ugradiRezim();

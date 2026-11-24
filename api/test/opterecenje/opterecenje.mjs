@@ -8,6 +8,7 @@
 //   UMIN, UMAX   raspon id-jeva kupaca sa sesijom 'tok'||id (zadano 101–10100);
 //                klijent šalje sid=tok<id>, a u bazi je sha256 heks tog tokena (napuni-bazu.mjs, migracija 010)
 //   BUTIKA       broj butika butik1…butikN (zadano 100)
+//   VIRAL        id oglasa za like_viral (zadano LMIN)
 //   LIGHT=1      lakši klijent (tajmeri iz docs/SKALIRANJE.md); bez toga stari tajmeri
 //   FEED=1       (uz LIGHT=1) klijent v1: strane iz /api/feed?kartica=zatebe s izuzmi, sviđanja svakih 30 s (B-01)
 // Izlazni kod 1 ako je bilo grešaka (5xx ili prekinuta veza).
@@ -21,6 +22,7 @@ const agent = new lib.Agent({ keepAlive: true, maxSockets: 4000 });
 const LISTING_MIN = Number(process.env.LMIN || 1), LISTING_MAX = Number(process.env.LMAX || 10000);
 const USER_MIN = Number(process.env.UMIN || 101), USER_MAX = Number(process.env.UMAX || 10100);
 const BUTIKA = Number(process.env.BUTIKA || 100);
+const VIRAL = Number(process.env.VIRAL || LISTING_MIN);
 const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -71,6 +73,9 @@ const ENDPOINTS = {
   likes_poll: (u) => req('GET', `/api/likes?ids=${ids20()}`, { user: u }),
   me: (u) => req('GET', '/api/me', { user: u }),
   like: (u) => req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/like`, { user: u }),
+  // Vruć brojač (talas 4): hiljade različitih kupaca označavaju ISTI oglas (VIRAL, zadano LMIN). Prekidač, pa
+  // svaki zahtjev stvarno mijenja red u likes i brojač — najgori slučaj za red oglasa u listings.
+  like_viral: (u) => req('POST', `/api/listings/${VIRAL}/like`, { user: u }),
   view: (u) => req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/view`, { user: u, ip: `10.${rnd(0, 250)}.${rnd(0, 250)}.${rnd(1, 250)}` }),
   conversations: (u) => req('GET', '/api/conversations', { user: u }),
   shop: () => req('GET', `/api/listings?shop=butik${rnd(1, BUTIKA)}`),

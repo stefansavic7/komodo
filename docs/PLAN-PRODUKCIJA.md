@@ -38,6 +38,7 @@ u `.claude/skills/komodo-rad/SKILL.md`.
 | Sigurnost | revizija, nalazi, provjera popravki | `docs/SIGURNOST.md` |
 | Proizvod i UX | specifikacija funkcija, tekstovi, tok ekrana | `docs/SPEC-V1.md` |
 | Recenzent | nezavisni pregled prije spajanja | samo čita |
+| UI/UX dizajner | revizija izgleda, pravac redizajna, dizajn sistem, nacrti (samo grana `redizajn`, skill `komodo-dizajn`) | `docs/DIZAJN.md`, `docs/DIZAJN-REVIZIJA.md`, `design/` |
 
 Pravilo rada u paraleli: dva agenta nikad ne mijenjaju isti fajl u istoj fazi. Svaka faza se završava
 spajanjem, pokretanjem svih testova i lokalnim git commitom (`/home/claude/snimi`), pa prenosom na laptop.
@@ -87,6 +88,13 @@ Namjerno van v1: plaćanje u aplikaciji, dostava, recenzije, više gradova, AI, 
 
 **Faza 2 — izgradnja**: sigurnosne popravke, pa funkcije v1 po specifikaciji (backend i frontend po paketima),
 svaki paket s testovima.
+
+**Faza 2b — otpornost (talas 4, po predavanju „Forgotten Scaling Techniques”, 20.11.)**: rokovi za upite i
+zahtjeve (statement_timeout, requestTimeout); klijent s nasumičnim razmakom, sve dužim čekanjem poslije greške i
+poštovanjem 429/Retry-After; „veliki crveni prekidač” (server javlja klijentima intervale, gašenje ličnog
+algoritma, stari keš kad baza zapne); test i rješenje za „vruć brojač” viralnog oglasa; odgođen posao (push) upisan
+u bazu prije slanja; ključ protiv duplog slanja poruke i objave. Poslije lansiranja: kontinuirano kopiranje baze (WAL)
+i vježbe oporavka.
 
 **Faza 3 — dokaz**: nezavisni pregled koda, svi testovi, test opterećenja lokalno, ažurirana dokumentacija.
 

@@ -54,13 +54,13 @@ function appendMessages(list) {
 function pollChat() {
   if (!chatId || !pageVisible()) { return; }
   var id = chatId;
-  api('GET', '/api/conversations/' + id + '/messages?after=' + chatLast).then(function (d) {
+  return api('GET', '/api/conversations/' + id + '/messages?after=' + chatLast).then(function (d) {
     if (chatId === id) { appendMessages(d.poruke); }
   }, function () {});
 }
 function stopChat() {
   if (chatId) { toApp({ type: 'chat', id: null }); }
-  clearInterval(chatTimer); chatTimer = null; chatId = null;
+  chatTimer = staniTajmer(chatTimer); chatId = null;
 }
 function openChat(id) {
   show('chat');
@@ -77,7 +77,8 @@ function openChat(id) {
     setChatBlock(d.blokirao, d.blokirano);
     $('#chatLog').innerHTML = d.poruke.length ? '' : '<p class="chat-empty">Napiši prvu poruku.</p>';
     appendMessages(d.poruke);
-    chatTimer = setInterval(pollChat, 4000);
+    chatTimer = staniTajmer(chatTimer);
+    chatTimer = tajmer('chat', pollChat, sljedeciRazmak('chat'));
     refreshUnread();
     paintChatForm();
     if (!$('#chatInput').disabled) { $('#chatInput').focus(); }
@@ -222,12 +223,17 @@ $('#chatReport').addEventListener('click', function () {
 });
 $('#chatBack').addEventListener('click', function () { show('inbox'); });
 
+// Idempotency-Key (talas 4): poruka koja nije potvrđena (pukla veza, greška) i ponovo se pošalje s istim tekstom
+// u istom razgovoru nosi isti ključ, pa server ne upiše dvije poruke ako je prva ipak stigla.
+var porukaKljuc = null, porukaZa = null;
 $('#chatForm').addEventListener('submit', function (e) {
   e.preventDefault();
   var input = $('#chatInput'), text = input.value.trim();
   if (!text || !chatId) { return; }
+  if (porukaZa !== chatId + '|' + text) { porukaKljuc = noviKljuc(); porukaZa = chatId + '|' + text; }
   input.value = ''; paintQuick();
-  api('POST', '/api/conversations/' + chatId + '/messages', { body: text }).then(function (d) {
+  api('POST', '/api/conversations/' + chatId + '/messages', { body: text }, { 'Idempotency-Key': porukaKljuc }).then(function (d) {
+    porukaKljuc = null; porukaZa = null;
     appendMessages([d.poruka]);
     paintQuick();
   }).catch(function (err) { input.value = text; paintQuick(); toast(err.message, true); });

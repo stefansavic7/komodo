@@ -26,6 +26,10 @@ Za 5.200 zahtjeva/s treba više Node procesa (po jedan na jezgro) i manje rada b
    oglasa butika, odnosno sviđanja kupca). Stranice i dalje po 20, s `before=<id zadnjeg>`.
 4. `GET /api/likes?ids=…` ostaje; klijent ga zove samo za oglas na ekranu.
 5. Sve ostale rute i oblici odgovora ostaju isti.
+6. Talas 4 (`docs/ARHITEKTURA.md`, „Otpornost”): `GET /api/config` daje intervale tajmera i zastavice
+   (`{rezim, intervali:{likes,me,profil,chat,views,config}, licniFeed, pregledi}`); odgovori API-ja nose
+   `X-Komodo-Rezim`. 429 i 503 uvijek imaju `Retry-After`, a klijent poslije greške čeka sve duže (do 5 min).
+   `POST` poruke i objave primaju `Idempotency-Key`. U hitnom režimu „Za tebe” vraća `{oglasi, kraj:true, rezim:'hitno'}`.
 
 ## Ponašanje klijenta (tajmeri)
 

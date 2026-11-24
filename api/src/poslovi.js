@@ -3,7 +3,9 @@
 // KOMODO_JOBS različitim od '0' (s više procesa to je prvi radnik, vidi src/index.js).
 import { readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { q } from './db.js';
+// Poslovi idu kroz poseban bazen s dužim rokom za upit (qPosao, PG_STATEMENT_TIMEOUT_POSAO_MS), ne kroz bazen API-ja.
+import { poolPosao, qPosao as q, uTransakciji } from './db.js';
+import { obradiOutbox } from './outbox.js';
 import { sendMail } from './mail.js';
 import { bunnyOn, bunnyState, deleteFromBunny, uploadToBunny } from './video.js';
 import { APP_URL, MIN, UPLOADS_DIR, app, cleanLine } from './app.js';
@@ -216,6 +218,10 @@ async function cleanup() {
   await q(`delete from rate_limits where window_start < now() - interval '2 hours'
              and (key not like '%:dan:%' or window_start < now() - interval '25 hours')`);
   await q("delete from known_devices where seen_at < now() - interval '180 days'");
+  // Talas 4: ključevi protiv duplog slanja žive 24 h; poslani redovi outboxa 7 dana, mrtvi 30 dana (za uvid).
+  await q("delete from idempotency_keys where created_at < now() - interval '24 hours'");
+  await q(`delete from outbox where (sent_at is not null and created_at < now() - interval '7 days')
+                                  or (dead_at is not null and created_at < now() - interval '30 days')`);
   await removeOrphanUploads();
   await removeStaleOg();
   for (let k = 0; k < 20; k += 1) {
@@ -269,6 +275,47 @@ async function removeStaleOg() {
   }
 }
 
+/* ---------- vruć brojač: razlike sviđanja → listings.likes_count (talas 4) ---------- */
+
+// Sviđanje upisuje +1/−1 u listing_likes_delta (src/rute/svidjanja-pregledi.js), a ovaj posao svake sekunde u jednoj
+// transakciji obriše do 50.000 razlika i doda njihov zbir u likes_count (jedan update po oglasu, umjesto jednog po
+// sviđanju). Ko čita broj, čita likes_count + još nesabrane razlike (isti snimak baze), pa je broj uvijek tačan.
+// Redovi oglasa se zaključavaju po redu id-ja, a lock_timeout 200 ms čini da u sudaru s brojanjem pregleda ustukne
+// ovaj posao (pokuša ponovo za sekundu), ne zahtjev korisnika.
+const SABIR_SERIJA = 50000;
+export async function saberiSvidjanja() {
+  try {
+    return await uTransakciji(poolPosao(), async (c) => {
+      await c.query("set local lock_timeout = '200ms'");
+      const d = await c.query(
+        `with d as (delete from listing_likes_delta where id in (select id from listing_likes_delta order by id limit $1)
+                    returning listing_id, delta)
+         select listing_id, sum(delta)::int as n, count(*)::int as redova from d group by listing_id order by listing_id`,
+        [SABIR_SERIJA],
+      );
+      const ids = [];
+      const ns = [];
+      let redova = 0;
+      for (const r of d.rows) {
+        redova += r.redova;
+        if (r.n !== 0) { ids.push(r.listing_id); ns.push(r.n); }
+      }
+      if (ids.length) {
+        await c.query('select id from listings where id = any($1::int[]) order by id for no key update', [ids]);
+        await c.query(
+          `update listings l set likes_count = l.likes_count + v.n
+             from unnest($1::int[], $2::int[]) as v(id, n) where l.id = v.id`,
+          [ids, ns],
+        );
+      }
+      return { redova, oglasa: ids.length };
+    });
+  } catch (err) {
+    if (err.code === '55P03') return { redova: 0, oglasa: 0, ceka: true }; // red oglasa zaključan: sljedeći put
+    throw err;
+  }
+}
+
 /* ---------- pokretanje ---------- */
 
 // Pokreće sve poslove i vraća tajmere (src/server.js ih gasi pri zaustavljanju).
@@ -281,6 +328,11 @@ export function pokreniPoslove() {
   cleanup().catch((err) => app.log.error(err, 'Čišćenje nije uspjelo'));
   every(20 * 1000, checkVideos, 'Provjera snimaka nije uspjela');
   every(MIN, notifyUnread, 'Slanje emaila o nepročitanim porukama nije uspjelo');
+  // Talas 4: razlike sviđanja (KOMODO_SABIR_MS, zadano 1 s) i outbox (OUTBOX_MS, zadano 1 s). Prolaz koji još traje
+  // se ne pokreće ponovo (jedan po jedan), da spora baza ne nagomila istovremene prolaze.
+  const jedanPoJedan = (fn) => { let radi = false; return async () => { if (radi) return; radi = true; try { await fn(); } finally { radi = false; } }; };
+  every(Math.max(100, Number(process.env.KOMODO_SABIR_MS) || 1000), jedanPoJedan(saberiSvidjanja), 'Sabiranje sviđanja nije uspjelo');
+  every(Math.max(100, Number(process.env.OUTBOX_MS) || 1000), jedanPoJedan(() => obradiOutbox(app.log)), 'Slanje iz outboxa nije uspjelo');
   every(10 * MIN, cleanup, 'Čišćenje nije uspjelo');
   const ocjene = () => izracunajOcjene().then((r) => {
     app.log.info(`base_score: ${r.oglasa} oglasa, promijenjeno ${r.promijenjeno}, r_avg ${r.rAvg.toFixed(4)}`);

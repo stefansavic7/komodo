@@ -266,8 +266,9 @@ describe('sviđanja', () => {
     const anon = await o.klijent().get(`/api/likes?ids=${oglas.id}`);
     assert.deepEqual(anon.body.svidjanja[oglas.id], { likes: 2, liked: false });
     assert.deepEqual((await kupac.get('/api/likes')).body, { svidjanja: {} });
-    const red = await o.baza.q('select likes_count from listings where id = $1', [oglas.id]);
-    assert.equal(red.rows[0].likes_count, 2);
+    // Talas 4: tačan broj = likes_count + razlike koje posao još nije sabrao (listing_likes_delta).
+    const red = await o.baza.q('select (likes_count + coalesce((select sum(delta) from listing_likes_delta where listing_id = $1), 0))::int as n from listings where id = $1', [oglas.id]);
+    assert.equal(red.rows[0].n, 2);
   });
 });
 

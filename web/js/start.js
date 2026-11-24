@@ -67,6 +67,9 @@ function openLink(search, hash) {
 /* ---------- start ---------- */
 
 renderChips();
+// Režim rada i intervali (talas 4): odmah (keširan odgovor, ne čeka ga ništa), pa svakih ~10 min.
+ucitajKonfig();
+var konfigTimer = tajmer('config', function () { if (pageVisible()) { ucitajKonfig(); } });
 var startLink = readLink(location.search, location.hash);
 if (startLink.secret) { history.replaceState(null, '', '/'); }
 Promise.all([
@@ -79,10 +82,15 @@ Promise.all([
     toApp({ type: 'ready', loggedIn: !!me });
     if (blocked) { return; }   // prestara verzija aplikacije: ostaje samo ekran za nadogradnju
     $('#tabPost').hidden = !isShop();
-    if (me) { unreadTimer = setInterval(tickUnread, 60000); }
-    // Skup praćenih butika (F-04, web/js/butik.js): jednom po učitavanju, za „Prati” na karticama i „Praćeni”.
-    if (me && typeof ensureFollows === 'function') { ensureFollows(); }
-    feedTimer = setInterval(refreshLikes, LIKES_EVERY);
+    // Pozadinski tajmeri počinju u nasumičnom trenutku (talas 4): kad se poslije pada servera hiljade telefona
+    // vrate u istoj sekundi, njihovi periodični pozivi se ne poklope. Feed se učitava odmah.
+    if (me) { unreadTimer = staniTajmer(unreadTimer); unreadTimer = tajmer('me', tickUnread); }
+    // Skup praćenih butika (F-04, web/js/butik.js): jednom po učitavanju, za „Prati” na karticama i „Praćeni”;
+    // 0–3 s poslije starta (ne treba prvoj kartici).
+    if (me && typeof ensureFollows === 'function') {
+      setTimeout(function () { if (me) { ensureFollows().then(function () { if (typeof paintAllFollow === 'function') { paintAllFollow(); } }); } }, Math.round(Math.random() * 3000));
+    }
+    feedTimer = staniTajmer(feedTimer); feedTimer = tajmer('likes', refreshLikes);
     applyLink(startLink, true);
   });
 });

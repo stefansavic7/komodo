@@ -34,7 +34,7 @@ if (!base) {
   await napuni(baza.url, { butika: 10, kupaca: 2200, oglasa: 300, svidjanja: 0 }, () => {});
   // Produkcija traži SMTP_URL i COOKIE_SECRET (S-01, S-07): lažni SMTP i probna tajna.
   const smtp = await lazniSmtp();
-  const api = await pokreniApi(baza, { NODE_ENV: 'production', PG_POOL: '20', SMTP_URL: smtp.url, COOKIE_SECRET });
+  const api = await pokreniApi(baza, { NODE_ENV: 'production', PG_POOL: '20', SMTP_URL: smtp.url, COOKIE_SECRET, KOMODO_JOBS: '1' });
   base = api.url;
   dbUrl = baza.url;
   cleanup = async () => { await api.stop(); await baza.drop(); await smtp.close(); };
@@ -72,9 +72,13 @@ function req(method, path, { user, body, ip, did } = {}) {
 const count = (rs) => rs.reduce((m, r) => { m[r.status] = (m[r.status] || 0) + 1; return m; }, {});
 const ok = (cond, text) => { if (!cond) neuspjeha += 1; console.log(`${cond ? 'OK    ' : 'GREŠKA'} ${text}`); };
 const n = async (sql, p) => Number((await db.query(sql, p)).rows[0].count);
-// Direktno brisanje iz likes zaobilazi API, pa se likes_count poravnava ručno.
-const fixCount = (L) => db.query('update listings set likes_count = (select count(*) from likes where listing_id = $1) where id = $1', [L]);
-const likesCount = async (L) => (await db.query('select likes_count from listings where id = $1', [L])).rows[0].likes_count;
+// Direktno brisanje iz likes zaobilazi API, pa se likes_count poravnava ručno (i brišu nesabrane razlike).
+const fixCount = (L) => db.query(`with x as (delete from listing_likes_delta where listing_id = $1)
+  update listings set likes_count = (select count(*) from likes where listing_id = $1) where id = $1`, [L]);
+// Talas 4 (vruć brojač): tačan broj = likes_count + razlike koje posao još nije sabrao (listing_likes_delta).
+const likesCount = async (L) => (await db.query(
+  'select (likes_count + coalesce((select sum(delta) from listing_likes_delta where listing_id = $1), 0))::int as n from listings where id = $1', [L],
+)).rows[0].n;
 
 const kupci = (await db.query("select id from users where role = 'kupac' and suspended_at is null order by id limit 2100")).rows.map((r) => r.id);
 const oglasi = (await db.query('select id, user_id from listings where deleted_at is null order by id limit 3')).rows;
@@ -198,8 +202,16 @@ try {
     ok(own === anon, `vlasnik pogleda svoj oglas: dodatnih pregleda ${own - anon} (očekivano 0)`);
   }
 
-  // 10. Cijela baza: likes_count svakog oglasa = broj redova u likes
+  // 10. Cijela baza: likes_count svakog oglasa = broj redova u likes — poslije sabiranja razlika (posao
+  //     sabirSvidjanja u API-ju s poslovima, svake sekunde): tabela razlika mora se isprazniti.
   {
+    const kraj = Date.now() + 15000;
+    let ostalo = await n('select count(*) from listing_likes_delta');
+    while (ostalo > 0 && Date.now() < kraj) {
+      await new Promise((r) => setTimeout(r, 200));
+      ostalo = await n('select count(*) from listing_likes_delta');
+    }
+    ok(ostalo === 0, `posao je sabrao sve razlike sviđanja (ostalo nesabranih: ${ostalo})`);
     const bad = await n('select count(*) from listings l where l.likes_count <> (select count(*) from likes k where k.listing_id = l.id)');
     ok(bad === 0, `likes_count se slaže s brojem redova u likes za sve oglase (neslaganja: ${bad})`);
   }

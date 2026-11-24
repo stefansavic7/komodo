@@ -1,11 +1,11 @@
 // Feed (docs/SPEC-V1.md, F-01): GET /api/feed s karticama „Za tebe” (algoritam), „Novo” i „Praćeni”, i
 // zajednička strana oglasa koju koristi i GET /api/listings (pretraga, profil butika, „Sviđa mi se”).
 // Rute registruje src/rute/oglasi.js (feed(app)), a ocjenu base_score računa posao u src/poslovi.js.
-import { q } from '../db.js';
+import { bazaNeOdgovara, q } from '../db.js';
 import { ocistiKesOgOvdje } from './og.js';
 import {
   CATEGORIES, LISTING_SELECT, VISIBLE_SQL, bad, boundedSet, clean, currentUser, isId, javiSvima, knownDeviceId,
-  naPoruku, parsePrice, parseSizes, publicListing,
+  naPoruku, parsePrice, parseSizes, publicListing, rezim,
 } from '../app.js';
 
 /* ---------- strana oglasa (redom id desc) — /api/listings i kartica „Novo” ---------- */
@@ -35,13 +35,33 @@ export function ocistiKesFeeda() {
   javiSvima('feed', 1);
 }
 
+// Zadnji uspješno učitan sadržaj svakog ključa (talas 4): kad baza ne odgovara (istekao rok, nema veze), javni feed
+// služi njega umjesto greške, uz zaglavlje X-Komodo-Zastarjelo: 1. Ne briše se pri ocistiKesFeeda (bolje star
+// feed nego greška), ali se ne koristi dok baza radi. Ograničen kao i keš.
+const zadnjeDobro = new Map();
+
 function cached(map, key, ttl, limit, load) {
   const hit = map.get(key);
   if (hit && hit.exp > Date.now()) return hit.value;
   const value = load();
   boundedSet(map, key, { value, exp: Date.now() + ttl }, limit);
-  value.catch(() => { if (map.get(key)?.value === value) map.delete(key); });
+  value.then(
+    (v) => { boundedSet(zadnjeDobro, `${map === kandCache ? 'k' : 'f'}|${key}`, v, FEED_CACHE_MAX + KAND_MAX); },
+    () => { if (map.get(key)?.value === value) map.delete(key); },
+  );
   return value;
+}
+
+// Kao cached, ali kad baza ne odgovara vraća zadnji dobar sadržaj i javlja to kroz zastarjelo() (zaglavlje).
+async function cachedIliStaro(map, key, ttl, limit, load, zastarjelo) {
+  try {
+    return await cached(map, key, ttl, limit, load);
+  } catch (err) {
+    const staro = zadnjeDobro.get(`${map === kandCache ? 'k' : 'f'}|${key}`);
+    if (!staro || !bazaNeOdgovara(err)) throw err;
+    if (zastarjelo) zastarjelo();
+    return staro;
+  }
 }
 
 async function likedSet(user, rows) {
@@ -55,7 +75,8 @@ async function likedSet(user, rows) {
 
 // Jedna strana (20) oglasa redom od najnovijeg. `p`: category, shop, liked ('1'), q, min, max, sizes, before.
 // Vraća { oglasi, ukupno? } (ukupno samo za shop/liked bez before — ugovor iz docs/SKALIRANJE.md).
-export async function stranaOglasa(user, p) {
+// `zastarjelo`: poziva se ako je strana iz zadnjeg dobrog keša jer baza ne odgovara (talas 4).
+export async function stranaOglasa(user, p, zastarjelo) {
   const { category, before } = p;
   const shop = p.shop ? String(p.shop).toLowerCase() : '';
   const liked = p.liked === '1';
@@ -96,7 +117,7 @@ export async function stranaOglasa(user, p) {
   if (direct) {
     rows = (await q(sql, params)).rows;
   } else {
-    rows = await cached(feedCache, JSON.stringify(norm), FEED_TTL, FEED_CACHE_MAX, () => q(sql, params).then((r) => r.rows));
+    rows = await cachedIliStaro(feedCache, JSON.stringify(norm), FEED_TTL, FEED_CACHE_MAX, () => q(sql, params).then((r) => r.rows), zastarjelo);
     const likedIds = await likedSet(user, rows);
     rows = rows.map((r) => ({ ...r, liked: likedIds.has(r.id), mine: !!user && r.user_id === user.id }));
   }
@@ -133,9 +154,9 @@ const KAND_SELECT = LISTING_SELECT
 if (!/sc\.base_score, 0\) as base_score, l\.id,/.test(KAND_SELECT) || !KAND_SELECT.includes('left join listing_scores sc')) {
   throw new Error('LISTING_SELECT: nema „select l.id,” ili spoja s users (feed.js, KAND_SELECT)');
 }
-function kandidati(category, sizes) {
+function kandidati(category, sizes, zastarjelo) {
   const key = JSON.stringify([category || '', sizes.join(',')]);
-  return cached(kandCache, key, KAND_TTL, KAND_MAX, async () => {
+  return cachedIliStaro(kandCache, key, KAND_TTL, KAND_MAX, async () => {
     const params = [0];
     let where = '';
     if (category) { params.push(category); where += ` and l.category = $${params.length}`; }
@@ -146,7 +167,7 @@ function kandidati(category, sizes) {
            and l.video_status = 'ready'${where} order by l.created_at desc, l.id desc limit 100`, params),
     ]);
     return { C: c.rows, D: d.rows };
-  });
+  }, zastarjelo);
 }
 
 // Lični faktori: jedan upit (docs/SPEC-V1.md, F-01, korak 3). Isto značenje kao upit iz specifikacije, ali
@@ -257,10 +278,13 @@ export default function rute(app) {
     const category = CATEGORIES.includes(req.query.category) ? req.query.category : '';
     const sizes = parseSizes(req.query.sizes);
     const user = await currentUser(req);
+    const zastarjelo = () => { reply.header('X-Komodo-Zastarjelo', '1'); };
 
-    if (kartica === 'novo') {
-      const out = await stranaOglasa(user, { category, sizes: sizes.join(','), before: req.query.before });
-      return { oglasi: out.oglasi };
+    // Hitni režim (talas 4): „Za tebe” bez ličnog algoritma — prva strana keširanog „Novo” i kraj:true, pa klijent
+    // nastavlja stranama „Novo” (isti put kao poslije kraja „Za tebe”).
+    if (kartica === 'novo' || (kartica === 'zatebe' && rezim() === 'hitno')) {
+      const out = await stranaOglasa(user, { category, sizes: sizes.join(','), before: kartica === 'novo' ? req.query.before : undefined }, zastarjelo);
+      return kartica === 'novo' ? { oglasi: out.oglasi } : { oglasi: out.oglasi, kraj: true, rezim: 'hitno' };
     }
 
     if (kartica === 'praceni') {
@@ -280,10 +304,19 @@ export default function rute(app) {
 
     // „Za tebe”
     const izuzmi = parseIzuzmi(req.query.izuzmi);
-    const { C, D } = await kandidati(category, sizes);
+    const { C, D } = await kandidati(category, sizes, zastarjelo);
     const did = user ? null : knownDeviceId(req);
     const viewer = user ? `u${user.id}` : (did ? `d${did}` : null);
-    const licno = C.length || D.length ? await licniFaktori(user ? user.id : 0, viewer) : PRAZNO;
+    let licno = PRAZNO;
+    if (C.length || D.length) {
+      try {
+        licno = await licniFaktori(user ? user.id : 0, viewer);
+      } catch (err) {
+        // Neprijavljen gledalac kad baza ne odgovara: strana bez ličnih faktora umjesto greške.
+        if (user || !bazaNeOdgovara(err)) throw err;
+        zastarjelo();
+      }
+    }
     const { rows, kraj } = slozi({ C, D, izuzmi, userId: user ? user.id : 0, licno });
     const svidja = new Set(licno.svidja);
     return {

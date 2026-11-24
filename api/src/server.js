@@ -1,8 +1,8 @@
 // Ulazna tačka jednog API procesa: spaja zajednički kontekst (src/app.js), rute (src/rute/*.js) i
 // pozadinske poslove (src/poslovi.js), pa sluša na PORT. `npm run dev` pokreće ovaj fajl direktno, a
 // src/index.js ga pokreće u više procesa (cluster). Struktura: docs/ARHITEKTURA.md.
-import { migrate, pool } from './db.js';
-import { CATEGORIES, HOST, MAX_VIDEO_MB, PORT, app, bad } from './app.js';
+import { bazaNeOdgovara, migrate, zatvoriBazu } from './db.js';
+import { CATEGORIES, HOST, MAX_VIDEO_MB, PORT, app, bad, preopterecen } from './app.js';
 import { pokreniPoslove } from './poslovi.js';
 import staticki, { sendIndex } from './rute/staticki.js';
 import opste from './rute/opste.js';
@@ -14,6 +14,7 @@ import oglasi from './rute/oglasi.js';
 import svidjanjaPregledi from './rute/svidjanja-pregledi.js';
 import poruke from './rute/poruke.js';
 import prijaveAdmin from './rute/prijave-admin.js';
+import rezimRute from './rute/rezim.js';
 
 export { CATEGORIES };
 
@@ -21,7 +22,7 @@ export { CATEGORIES };
 
 // Svaka datoteka u src/rute/ izvozi funkciju (app) => void koja registruje svoje rute na zajedničkoj
 // instanci (bez app.register, pa nema zasebnog opsega: isti hookovi, isti rukovalac greškama).
-for (const registruj of [staticki, opste, auth, profil, push, butici, oglasi, svidjanjaPregledi, poruke, prijaveAdmin]) {
+for (const registruj of [staticki, opste, auth, profil, push, butici, oglasi, svidjanjaPregledi, poruke, prijaveAdmin, rezimRute]) {
   registruj(app);
 }
 
@@ -30,6 +31,11 @@ for (const registruj of [staticki, opste, auth, profil, push, butici, oglasi, sv
 app.setErrorHandler((err, req, reply) => {
   if (err.code === 'FST_REQ_FILE_TOO_LARGE') return bad(reply, 413, `Video je prevelik. Najviše ${MAX_VIDEO_MB} MB.`);
   if (err.statusCode && err.statusCode < 500) return bad(reply, err.statusCode, 'Zahtjev nije ispravan.');
+  // Talas 4: istekao rok upita, baza ne prima veze ili je bazen pun → 503 s Retry-After, nikad 500.
+  if (bazaNeOdgovara(err)) {
+    req.log.warn({ code: err.code, msg: err.message, url: req.url }, 'Baza ne odgovara na vrijeme (503)');
+    return preopterecen(reply);
+  }
   req.log.error(err);
   return bad(reply, 500, 'Greška na serveru. Pokušaj ponovo.');
 });
@@ -53,7 +59,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
     for (const t of timers) clearInterval(t);
     await app.close();
-    await pool.end();
+    await zatvoriBazu();
     process.exit(0);
   });
 }

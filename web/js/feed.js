@@ -296,9 +296,15 @@ function loadFeed(reset, firstId) {
       var novih = list.filter(function (i) { return !byId(i.id); }).length + (r[0] && !byId(r[0].id) ? 1 : 0);
       if (r[1].kraj || !novih) {
         zaTebeKraj = true; prelaz = true;
-        // Razdjelnik samo ako je „Za tebe” nešto prikazao; inače odmah najnoviji.
-        if (items.length || list.length || r[0]) { divider = true; }
-        again = true;
+        if (r[1].rezim === 'hitno') {
+          // Hitni režim servera (talas 4): ovo je već prva strana „Novo” — bez razdjelnika, dalje strane „Novo”.
+          if (list.length) { novoBefore = list[list.length - 1].id; }
+          if (list.length < 20) { noMore = true; }
+        } else {
+          // Razdjelnik samo ako je „Za tebe” nešto prikazao; inače odmah najnoviji.
+          if (items.length || list.length || r[0]) { divider = true; }
+          again = true;
+        }
       }
     } else {
       if (list.length < 20) { noMore = true; }
@@ -369,13 +375,14 @@ function paintLike(item) {
   btn.querySelector('.n').textContent = likeCount(item);
 }
 // Dok je feed otvoren i stranica vidljiva, broj sviđanja oglasa na ekranu se osvježava sam.
-// B-01: najviše jednom u LIKES_EVERY (30 s), i kad ga tajmer zove češće.
+// B-01: najviše jednom u ~intervalu sviđanja (30 s; KONFIG, talas 4), i kad ga tajmer ili povratak na stranicu
+// zovu češće. Prag je 75 % intervala, jer tajmer ima nasumičan pomak ±20 %.
 function refreshLikes() {
   if (feed.hidden || !pageVisible() || !currentId || !byId(currentId) || likeBusy[currentId]) { return; }
-  if (Date.now() - likesAt < LIKES_EVERY - 1000) { return; }
+  if (Date.now() - likesAt < intervalZa('likes') * 0.75) { return; }
   likesAt = Date.now();
   var id = currentId;
-  api('GET', '/api/likes?ids=' + encodeURIComponent(id)).then(function (d) {
+  return api('GET', '/api/likes?ids=' + encodeURIComponent(id)).then(function (d) {
     var item = byId(id), v = d.svidjanja && d.svidjanja[id];
     if (!item || !v || likeBusy[id] || (item.likes === v.likes && item.liked === v.liked)) { return; }
     item.likes = v.likes; item.liked = v.liked;
@@ -386,6 +393,7 @@ function refreshLikes() {
 /* ---------- pregledi: skupljaju se i šalju zajedno ---------- */
 
 function queueView(id) {
+  if (!KONFIG.pregledi) { return; }   // hitni režim: pregledi se ne šalju (server ih tada ni ne broji)
   viewQueue.push(Number(id));
   if (viewQueue.length > MAX_VIEW_QUEUE) { viewQueue = viewQueue.slice(-MAX_VIEW_QUEUE); }
 }
@@ -428,19 +436,22 @@ function flushViews() {
   viewQueue = viewQueue.slice(ids.length);
   if (viewsBatch === false) { sendViewsOneByOne(ids, false); flushViews(); return; }
   viewsSending = true;
-  fetch('/api/views', {
+  return fetch('/api/views', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids })
   }).then(function (res) {
     viewsSending = false;
+    zabiljeziOdgovor(res.status, res.headers.get('Retry-After'));
     if (res.status === 404 || res.status === 405) { viewsBatch = false; sendViewsOneByOne(ids, false); flushViews(); return; }
     if (res.ok) { viewsBatch = true; flushViews(); return; }
     if (res.status === 429 || res.status >= 500) { requeueViews(ids); }
   }, function () {
     viewsSending = false;
+    zabiljeziOdgovor(0);
     requeueViews(ids);
   });
 }
-setInterval(flushViews, 30000);
+// Svakih ~30 s (KONFIG.intervali.views, ±20 %, duže poslije grešaka servera).
+var viewsTimer = tajmer('views', flushViews);
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'hidden') { flushViewsOnHide(); hiddenAt = Date.now(); return; }
   // Povratak poslije više od 30 min: feed od početka (novi „Za tebe”, prazan izuzmi).

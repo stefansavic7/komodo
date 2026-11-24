@@ -90,7 +90,7 @@ export default function rute(app) {
       return bad(reply, 400, 'Lozinka nije tačna.');
     }
     const files = await q(`select ${VIDEO_COLS} from listings where user_id = $1 and deleted_at is null`, [user.id]);
-    // Sviđanja korisnika nestaju kaskadno, pa se u istoj transakciji umanjuje likes_count tih oglasa.
+    // Sviđanja korisnika se brišu u istoj transakciji, a brojač oglasa umanjuje preko listing_likes_delta.
     await inTransaction(async (c) => {
       // Praćenje: redovi follows nestaju kaskadno, pa se u istoj transakciji umanjuju brojači onih koje
       // to dira — followers_count butika koje je korisnik pratio i following_count njegovih pratilaca
@@ -113,15 +113,12 @@ export default function rute(app) {
            from follows f where f.user_id = u.id and f.shop_id = $1`,
         [user.id],
       );
-      // Redovi oglasa se zaključavaju po redu id-ja, da se dva istovremena brisanja ne zaglave.
+      // Talas 4 (vruć brojač): sviđanja korisnika se brišu ovdje (ne kaskadno), a za svako obrisano ide −1 u
+      // listing_likes_delta; posao ga sabere u likes_count. Ne zaključava redove oglasa, a `returning` vraća samo
+      // redove koje je ova naredba stvarno obrisala (istovremeni „ne sviđa mi se” istog reda se ne broji dvaput).
       await c.query(
-        `select id from listings where id in (select listing_id from likes where user_id = $1)
-          order by id for no key update`,
-        [user.id],
-      );
-      await c.query(
-        `update listings l set likes_count = l.likes_count - 1
-           from likes k where k.listing_id = l.id and k.user_id = $1`,
+        `with d as (delete from likes where user_id = $1 returning listing_id)
+         insert into listing_likes_delta(listing_id, delta) select listing_id, -1 from d`,
         [user.id],
       );
       await c.query('delete from users where id = $1', [user.id]);

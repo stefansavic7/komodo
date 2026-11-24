@@ -10,7 +10,7 @@ import Fastify, { LogController } from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
-import { pool, q } from './db.js';
+import { pool, q, uTransakciji } from './db.js';
 import { sendMail } from './mail.js';
 import { cleanLine } from './nalog.js';
 import { provjeriOkolinu } from './provjera.js';
@@ -61,6 +61,12 @@ export const VIDEO_EXT = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/
 
 /* ---------- pomoćne funkcije ---------- */
 
+// Broj milisekundi iz okoline; prazno ili neispravno → zadano (0 je dozvoljeno).
+function msIzOkoline(ime, zadano) {
+  const v = process.env[ime];
+  return v !== undefined && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : zadano;
+}
+
 export function bad(reply, code, greska) {
   return reply.code(code).send({ greska });
 }
@@ -108,14 +114,17 @@ export function isAdmin(u) {
 // Fiksni prozor: prvi pokušaj otvara prozor od `windowMs`; kad istekne, brojanje kreće ispočetka.
 // Vraća true ako je ključ prešao `max` pokušaja u trenutnom prozoru.
 export async function limited(key, max, windowMs) {
-  const res = await q(
-    `insert into rate_limits(key, window_start, hits) values ($1, now(), 1)
+  // Imenovane naredbe (ovdje, sviđanja, pregledi, jedan oglas): plan se pravi jednom po vezi; najčešći upiti API-ja.
+  // Samo za upite s izričito navedenim kolonama (ne `*`), da izmjena šeme ne pokvari pripremljen plan.
+  const res = await q({
+    name: 'ogranicenje',
+    text: `insert into rate_limits(key, window_start, hits) values ($1, now(), 1)
      on conflict (key) do update set
        hits = case when rate_limits.window_start <= now() - make_interval(secs => $2) then 1 else rate_limits.hits + 1 end,
        window_start = case when rate_limits.window_start <= now() - make_interval(secs => $2) then now() else rate_limits.window_start end
      returning hits`,
-    [key, windowMs / 1000],
-  );
+    values: [key, windowMs / 1000],
+  });
   return res.rows[0].hits > max;
 }
 
@@ -182,7 +191,8 @@ export const VISIBLE_SQL = bunnyOn
 
 export const LISTING_SELECT = `
   select l.id, l.user_id, l.title, l.price_cents, l.category, l.video_path, l.created_at, l.sold, l.views,
-         l.video_provider, l.video_status, l.bunny_guid, l.video_res, l.likes_count,
+         l.video_provider, l.video_status, l.bunny_guid, l.video_res,
+         (l.likes_count + coalesce((select sum(dd.delta) from listing_likes_delta dd where dd.listing_id = l.id), 0))::int as likes_count,
          l.sizes, l.sold_at, l.old_price_cents, l.price_dropped_at, l.price_set_at,
          u.shop_name, u.handle,
          exists(select 1 from likes k where k.listing_id = l.id and k.user_id = $1) as liked,
@@ -196,18 +206,7 @@ export const VIDEO_COLS = 'id, video_path, video_provider, bunny_guid';
 
 // Izvršava fn(client) u jednoj transakciji i vraća njen rezultat.
 export async function inTransaction(fn) {
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    const out = await fn(client);
-    await client.query('commit');
-    return out;
-  } catch (err) {
-    await client.query('rollback').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  return uTransakciji(pool, fn);
 }
 
 /* ---------- aplikacija ---------- */
@@ -221,7 +220,38 @@ export const app = Fastify({
   // zaglavlje uopšte (req.ip ostaje 127.0.0.1). Bez proxyja (razvoj) zaglavlje se ne gleda.
   logger: true, bodyLimit: 64 * 1024, trustProxy: PROD ? (addr, hop) => hop === 0 : false,
   logController: new LogController({ disableRequestLogging: process.env.LOG_REQUESTS !== '1' }),
+  // Rokovi za HTTP (talas 4): veza bez ijednog bajta HTTP_CONNECTION_TIMEOUT_MS (zadano 120 s) se zatvara —
+  // to je rok neaktivnosti, pa spor upload videa (110 MB na sporoj vezi) prolazi dok god podaci teku. Cijeli
+  // zahtjev (zaglavlja + tijelo) mora stići za HTTP_REQUEST_TIMEOUT_MS (zadano 30 min, dovoljno za 110 MB pri
+  // ~0,5 Mbit/s). Ispred je Nginx sa svojim rokovima (client_body_timeout, server/nginx-komodo.conf).
+  // 0 isključuje rok.
+  connectionTimeout: msIzOkoline('HTTP_CONNECTION_TIMEOUT_MS', 120 * 1000),
+  requestTimeout: msIzOkoline('HTTP_REQUEST_TIMEOUT_MS', 30 * 60 * 1000),
 });
+
+/* ---------- režim rada („veliki crveni prekidač”, talas 4) ---------- */
+
+// normalno | stedi | hitno. Izvor: red 'rezim' u app_settings (administrator, POST /api/admin/rezim), inače
+// KOMODO_REZIM iz okoline. Svaki proces drži vrijednost u memoriji: učita je pri startu i svakih 30 s, a promjenu
+// iz administracije dobija odmah preko javiSvima('rezim'). Šta režim radi: src/rute/rezim.js i docs/RUNBOOK.md.
+export const REZIMI = ['normalno', 'stedi', 'hitno'];
+const rezimIzOkoline = REZIMI.includes(process.env.KOMODO_REZIM) ? process.env.KOMODO_REZIM : 'normalno';
+let rezimSada = rezimIzOkoline;
+export function rezim() { return rezimSada; }
+export function rezimOkoline() { return rezimIzOkoline; }
+export function postaviRezimOvdje(r) { rezimSada = REZIMI.includes(r) ? r : rezimIzOkoline; }
+
+/* ---------- preopterećenje: 503 i Retry-After ---------- */
+
+export const PREOPTERECEN = 'Server je trenutno preopterećen. Pokušaj ponovo za trenutak.';
+// Retry-After uz nasumičan pomak, da se klijenti poslije pada ne vrate svi u istoj sekundi.
+export function retryAfter(osnovaSek) {
+  return String(Math.round(osnovaSek * (1 + Math.random())));
+}
+export function preopterecen(reply) {
+  reply.header('Retry-After', retryAfter(5));
+  return reply.code(503).send({ greska: PREOPTERECEN });
+}
 
 await mkdir(UPLOADS_DIR, { recursive: true });
 await app.register(cookie, { secret: COOKIE_SECRET });
@@ -249,6 +279,23 @@ app.addHook('onRequest', (req, reply, done) => {
     return;
   }
   done();
+});
+// Svaki 429 i 503 nosi Retry-After (klijent web/js/osnova.js ga poštuje). Ruta koja zna tačan prozor ga
+// postavlja sama; inače 429 → ~60 s, 503 → ~10 s. Odgovori API-ja nose i X-Komodo-Rezim: klijent po njemu vidi
+// promjenu režima odmah, bez čekanja periodičnog /api/config.
+// Isti hook (jedan, bez obećanja za obične zahtjeve) pamti odgovor zahtjeva s Idempotency-Key (idempotentno ispod).
+app.addHook('onSend', (req, reply, payload, done) => {
+  const code = reply.statusCode;
+  if ((code === 429 || code === 503) && !reply.hasHeader('retry-after')) reply.header('Retry-After', retryAfter(code === 429 ? 30 : 5));
+  if (req.url.startsWith('/api/')) reply.header('X-Komodo-Rezim', rezimSada);
+  const args = req.komodoIdem;
+  if (!args) { done(null, payload); return; }
+  // Odgovor zahtjeva koji je zauzeo ključ: 2xx se sačuva, sve ostalo briše ključ.
+  req.komodoIdem = null;
+  const sql = code >= 200 && code < 300 && typeof payload === 'string'
+    ? q('update idempotency_keys set status = $4, odgovor = $5 where user_id = $1 and ruta = $2 and kljuc = $3', [...args, code, payload])
+    : q('delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args);
+  sql.then(() => done(null, payload), () => done(null, payload));
 });
 await app.register(multipart, { limits: { fileSize: MAX_VIDEO_MB * 1024 * 1024, files: 1, fields: 10 } });
 await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: '/media/', decorateReply: false, maxAge: '7d' });
@@ -305,6 +352,7 @@ export async function currentUser(req) {
   if (!token || token.length > 200) return null;
   const hit = userCache.get(token);
   if (hit && hit.exp > Date.now()) return hit.user;
+  // Namjerno bez imenovane naredbe: `u.*` u pripremljenom planu bi pukao kad migracija doda kolonu u users.
   const res = await q(
     `select u.* from sessions s join users u on u.id = s.user_id
       where s.token = $1 and s.expires_at > now() and u.suspended_at is null`,
@@ -462,3 +510,71 @@ export async function myConversation(userId, id) {
   );
   return res.rows[0] || null;
 }
+
+/* ---------- ključ protiv duplog slanja (Idempotency-Key, talas 4) ---------- */
+
+// POST poruke i POST /api/listings: klijent šalje zaglavlje Idempotency-Key (jedan ključ po radnji korisnika;
+// web/js/poruke.js i objava.js). Isti ključ istog korisnika za istu rutu u 24 h vraća sačuvan odgovor (isti
+// status i tijelo, zaglavlje Idempotent-Replay: true) bez ponovnog upisa. Dok prvi zahtjev još radi, drugi dobija
+// 409 s Retry-After. Čuvaju se samo uspješni odgovori (2xx); greška (400, 429, 5xx, prekinut upload) briše ključ,
+// pa isti ključ smije pokušati ponovo. Bez zaglavlja ruta radi kao ranije. Tabela idempotency_keys (013),
+// čišćenje starijih od 24 h u poslovi.js.
+const IDEM_RE = /^[A-Za-z0-9_-]{8,100}$/;
+const IDEM_ZAGLAVLJEN_MIN = 35; // zahtjev „u toku” duže od roka za cijeli zahtjev (30 min) je mrtav
+
+async function procitajTijeloDoKraja(req) {
+  // Ponovljena objava (multipart): tijelo se pročita i baci, da klijent dobije odgovor, a ne prekinutu vezu.
+  if (!req.isMultipart || !req.isMultipart()) return;
+  try {
+    for await (const part of req.parts()) { if (part.file) part.file.resume(); }
+  } catch { /* klijent je prekinuo */ }
+}
+
+export function idempotentno(ruta, handler) {
+  return async function sKljucem(req, reply) {
+    const kljuc = req.headers['idempotency-key'];
+    if (kljuc === undefined) return handler.call(this, req, reply);
+    if (typeof kljuc !== 'string' || !IDEM_RE.test(kljuc)) return bad(reply, 400, 'Zaglavlje Idempotency-Key nije ispravno.');
+    const user = await currentUser(req);
+    if (!user) return handler.call(this, req, reply);
+    const args = [user.id, ruta, kljuc];
+    for (let pokusaj = 0; pokusaj < 3; pokusaj += 1) {
+      const ins = await q(
+        'insert into idempotency_keys(user_id, ruta, kljuc) values ($1, $2, $3) on conflict do nothing returning 1', args,
+      );
+      if (ins.rowCount === 1) {
+        req.komodoIdem = args;
+        try {
+          return await handler.call(this, req, reply);
+        } catch (err) {
+          req.komodoIdem = null;
+          await q('delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args).catch(() => {});
+          throw err;
+        }
+      }
+      const old = await q(
+        `select status, odgovor, created_at < now() - interval '24 hours' as star,
+                (status is null and created_at < now() - make_interval(mins => $4)) as zaglavljen
+           from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3`,
+        [...args, IDEM_ZAGLAVLJEN_MIN],
+      );
+      if (old.rowCount === 0) continue; // upravo obrisan (greška prvog zahtjeva): pokušaj ponovo
+      const r = old.rows[0];
+      if (r.star || r.zaglavljen) {
+        await q('delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args);
+        continue;
+      }
+      await procitajTijeloDoKraja(req);
+      if (r.status === null) {
+        reply.header('Retry-After', '2');
+        return bad(reply, 409, 'Ova radnja je već u toku. Sačekaj trenutak.');
+      }
+      reply.header('Idempotent-Replay', 'true').header('Content-Type', 'application/json; charset=utf-8');
+      return reply.code(r.status).send(r.odgovor);
+    }
+    await procitajTijeloDoKraja(req);
+    reply.header('Retry-After', '2');
+    return bad(reply, 409, 'Ova radnja je već u toku. Sačekaj trenutak.');
+  };
+}
+

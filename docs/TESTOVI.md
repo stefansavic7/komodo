@@ -6,23 +6,23 @@ pokrenu API kao poseban proces (`api/src/server.js`), a na kraju ga ugase i bazu
 
 | Šta | Gdje | Pokretanje (iz foldera) |
 |---|---|---|
-| API testovi (node:test, 222 testa u 18 fajlova, ~32 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
+| API testovi (node:test, 241 test u 19 fajlova, ~45 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
 | Test istovremenosti | `api/test/opterecenje/istovremenost.mjs` | `api`: `npm run test:istovremenost` |
 | Test opterećenja | `api/test/opterecenje/opterecenje.mjs` | vidi `api/test/opterecenje/README.md` |
 | Punjenje probne baze (samo lokalno) | `api/test/opterecenje/napuni-bazu.mjs` | vidi isti README |
 | Testovi mobilne navigacije (6 testova, bez zavisnosti) | `mobile/navigacija.test.mjs` | repozitorij: `node --test mobile/navigacija.test.mjs` |
-| E2E u pregledniku (Playwright, 390×844) | `tests/e2e/*.spec.mjs` (9 fajlova, 33 testa) | `tests`: `npx playwright test` |
+| E2E u pregledniku (Playwright, 390×844) | `tests/e2e/*.spec.mjs` (10 fajlova, 36 testova) | `tests`: `npx playwright test` |
 | CI na svaki push i pull request | `.github/workflows/ci.yml` | GitHub Actions |
 
-## Spisak test fajlova (stanje 20.11.2026.)
+## Spisak test fajlova (stanje 24.11.2026.)
 
-API (`api/test/`, ukupno 222): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
+API (`api/test/`, ukupno 241): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
 `butik-profil` 8, `butik-sati` 11, `feed-algoritam` 16, `feed-r01-klaster` 4, `nalog` 23, `og-pregled` 15,
-`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `poruke-r04-blokiranje` 7, `poruke` 14, `sigurnost` 15,
+`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `otpornost` 19, `poruke-r04-blokiranje` 7, `poruke` 14, `sigurnost` 15,
 `statistika-admin` 7, `statistika-me` 8.
 
 E2E (`tests/e2e/`): `admin`, `butik-profil`, `butik`, `feed`, `feed-kraj`, `kupac`, `nadogradnja`, `oglas`,
-`poruke-statistika`. Mobilni: `mobile/navigacija.test.mjs` (6).
+`otpornost`, `poruke-statistika`. Mobilni: `mobile/navigacija.test.mjs` (6).
 
 Dodano uz Recenziju 2 (`docs/RECENZIJA-2.md`, „Stanje popravki”): `feed-algoritam` — straničenje „Za tebe” s 330
 vidljivih oglasa (C∪D = 300) do `kraj:true` bez ponavljanja i bez prazne strane (R2-01, R2-08); `oglas-snizenje` —
@@ -31,6 +31,22 @@ praćenje butika koji se upravo briše → 404 (R2-06, deterministički: brisanj
 i brisanje butika čiste keš feeda i OG (R2-03); `backend-sema` — migracija 012. E2E `feed-kraj` — kraj „Za tebe” na
 pravom serveru (330 oglasa) i na „pokvarenom” (lažni `/api/feed` uvijek isti, `kraj:false`): ≤ 2 zahtjeva u 10 s
 mirovanja (R2-01); vlastita baza i API, ne dira zajedničke podatke.
+
+Dodano uz talas 4 „otpornost” (`docs/ARHITEKTURA.md`, „Otpornost”): `otpornost.test.mjs` — upit koji čeka zaključanu
+tabelu duže od `PG_STATEMENT_TIMEOUT_MS` → 503 s porukom i `Retry-After` (ne 500); veze API-ja i poslova imaju svoje
+rokove, transakcija u mirovanju se prekida; spor upload (~4 s, podaci svakih 400 ms) prolazi uz rok neaktivnosti
+1,5 s, a veza bez podataka se zatvara; `/api/config` (keš, režimi), admin prekidač (`stedi`, `hitno`: „Za tebe” =
+„Novo”, pregledi se ne broje; `null` → okolina), `KOMODO_REZIM` i širenje promjene na oba radnika klastera; 429 s
+`Retry-After`; baza ne prima veze → javni feed i „Za tebe” za neprijavljene iz zadnjeg keša (`X-Komodo-Zastarjelo`),
+prijavljeni i `/api/health` 503 s `Retry-After`, pa oporavak; 300 istovremenih sviđanja istog oglasa kroz
+`listing_likes_delta` (posao sabere, `likes_count` = redova), brisanje naloga s nesabranim sviđanjem; outbox: push
+stiže, Expo 500 → ponovo s čekanjem ~5 s, poslije `OUTBOX_POKUSAJA` mrtav red, SIGKILL usred slanja → poslije
+restarta tačno jednom, dva procesa × 300 redova → svaki tačno jednom; Idempotency-Key (isti odgovor, 10 istovremenih
+→ jedna poruka, po korisniku, 400 se ne pamti, istek 24 h, objava). E2E `otpornost`: isti ključ pri ponovnom slanju
+poruke poslije pukle veze; tajmer poslije 503 + `Retry-After: 2` (razmaci ≥ 2 s, ≤ 5 poziva u 9 s) i povratak na
+normalno s rasipanjem; `X-Komodo-Rezim: hitno` → `/api/config?r=hitno`, bez pregleda, „Za tebe” bez razdjelnika;
+prekidač u administraciji. Test istovremenosti pokreće API s poslovima (`KOMODO_JOBS=1`) i na kraju čeka da posao
+sabere sve razlike sviđanja, pa tek onda poredi `likes_count` s redovima.
 
 ## API testovi — šta pokrivaju (osnovni fajlovi; ostali su imenovani po temi, vidi spisak iznad)
 

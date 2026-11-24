@@ -112,7 +112,7 @@ Prva komanda pokazuje koji kod i koja putanja (polja reda: vrijeme, status, `rt=
 |---|---|---|
 | 502 | API ne radi ili se restartuje | `docker compose ps`, `docker compose logs api --tail 100`, `docker compose up -d` |
 | 504 | API odgovara sporije od 60 s (baza zaglavljena) | odjeljak 4 |
-| 503 | `/api/health`: baza ne odgovara | `docker compose logs db --tail 50`, odjeljak 2 |
+| 503 | `/api/health`: baza ne odgovara; ili API: upit duži od 5 s / baza ne prima veze (u logu `Baza ne odgovara na vrijeme (503)`); ili Nginx: API ne odgovara (502/504 se šalju kao 503 s `Retry-After`) | `docker compose logs db --tail 50`, odjeljak 2; spora baza → odjeljak 4 i 4a |
 | 500 | greška u kodu (često poslije nove verzije) | logovi iznad; ako je počelo s objavom → odjeljak 10 i poruka backendu s redovima `"level":50` |
 
 `429` nije greška servera: to je ograničenje broja zahtjeva (Nginx ili API). Ako ga dobijaju mnogi pravi
@@ -138,6 +138,49 @@ Cilj je p95 ispod 300 ms (`docs/PLAN-PRODUKCIJA.md`). Kako čitati:
   s ispisom upita. Jedan zaglavljen upit se prekida s
   `docker compose exec db psql -U komodo -d komodo -c "select pg_cancel_backend(PID)"` (PID iz ispisa).
 - Broj konekcija blizu `DB_MAX_CONNECTIONS` iz `.env`: pravila na vrhu `server/env.server.primjer`.
+
+## 4a. Štedni i hitni režim („veliki crveni prekidač”)
+
+Kad server ne stiže (p95 iznad 300 ms, CPU baze ili API-ja stalno na vrhu, mnogo 503), a jači server (odjeljak 7)
+nije opcija za sljedećih 15 minuta: smanji koliko često aplikacije pitaju server. Ništa se ne restartuje.
+
+| Režim | Šta radi | Kada |
+|---|---|---|
+| `normalno` | tajmeri kao inače (~6 zahtjeva/min po korisniku), lični „Za tebe” | uvijek, osim dolje |
+| `stedi` | sviđanja na ekranu 90 s, značka poruka 3 min, profil 2 min, pregledi 2 min, otvoren razgovor 8 s (~2–3 zahtjeva/min) | vrh prometa (reklama), CPU > ~70 % duže od 10 min |
+| `hitno` | „Za tebe” = keširani „Novo” (bez ličnog algoritma), pregledi se ne šalju i ne broje, sve ostalo najviše svakih 5 min, otvoren razgovor 15 s | baza ne stiže ni u `stedi`; 503 i dalje rastu |
+
+Kako uključiti (bilo koje od dva):
+
+1. **Aplikacija** (najbrže): prijavi se kao administrator → Profil → Administracija → „Režim rada” → Štedni ili
+   Hitni. Važi odmah u svim procesima API-ja. „Vrati na podešavanje servera” vraća na `KOMODO_REZIM` iz `api/.env`.
+2. **Server** (kad aplikacija ne radi): u `api/.env` upiši `KOMODO_REZIM=stedi` (ili `hitno`), pa
+   ```bash
+   cd ~/komodo
+   nano api/.env
+   docker compose up -d
+   curl -s http://127.0.0.1:3002/api/config
+   ```
+   Pazi: izbor iz administracije ima prednost nad `.env`. Ako je neko ranije izabrao režim u aplikaciji, vrati ga
+   dugmetom „Vrati na podešavanje servera” ili u bazi:
+   `docker compose exec db psql -U komodo -d komodo -c "delete from app_settings where key = 'rezim'"` (API ga
+   pročita za najviše 30 s).
+
+Koliko brzo stiže do telefona: svaki odgovor API-ja nosi zaglavlje `X-Komodo-Rezim`, pa aplikacija novi režim
+vidi pri prvom sljedećem zahtjevu (najkasnije ~1 min, značka poruka), a `/api/config` je u Nginxu keširan 30 s.
+Provjera: `curl -s https://komodo.ba/api/config` → `"rezim":"stedi"`.
+
+Šta još radi samo od sebe (bez prekidača):
+
+- Upit duži od 5 s se prekida → 503 „Server je trenutno preopterećen…” s `Retry-After`; aplikacija tada čeka sve
+  duže (×2 po grešci, do 5 min, uz nasumičan pomak) i vraća se na normalno poslije prvog uspjeha.
+- Kad baza ne odgovara, javni feed i „Za tebe” za neprijavljene služe zadnji keš (zaglavlje `X-Komodo-Zastarjelo: 1`).
+- Push o porukama i sniženjima čeka u tabeli `outbox` i šalje se kad Expo/mreža proradi. Pregled:
+  `docker compose exec db psql -U komodo -d komodo -c "select vrsta, count(*) filter (where sent_at is null and dead_at is null) as ceka, count(*) filter (where dead_at is not null) as mrtvih from outbox group by vrsta"`.
+  Mrtvi redovi (6 neuspjelih pokušaja) imaju razlog u koloni `greska`; ponovo ih pošalji s
+  `update outbox set dead_at = null, pokusaja = 0, run_at = now() where dead_at is not null and created_at > now() - interval '1 day'`.
+
+Poslije talasa vrati `normalno` (aplikacija ili `.env`) i zapiši u dnevnik kada i zašto je režim mijenjan.
 
 ## 5. Bunny ne radi (oglasi ostaju „Obrađuje se”)
 
@@ -329,6 +372,13 @@ sudo find /var/cache/nginx/komodo -mindepth 1 -delete
   `listings.base_score` (kolona je ostala; prvi prolaz posla pri startu je popuni), a kandidate „Za tebe” čita bez
   indeksa (pregled ~10.000 redova jednom u minuti po procesu — prihvatljivo). `listing_scores` i `price_set_at` ostaju
   i ne smetaju; ponovna objava nove verzije ne traži ništa (posao za 5 min osvježi `listing_scores`).
+- **Povratak na verziju prije migracije 013 (talas 4, otpornost).** Stara verzija ne zna za `listing_likes_delta`:
+  sviđanja koja posao još nije sabrao (najviše ~1 s prometa) ne bi ušla u `likes_count`. Odmah poslije povratka
+  ih saberi jednom:
+  `docker compose exec db psql -U komodo -d komodo -c "with d as (delete from listing_likes_delta returning listing_id, delta) update listings l set likes_count = l.likes_count + s.n from (select listing_id, sum(delta)::int as n from d group by 1) s where l.id = s.listing_id"`.
+  Push koji je čekao u `outbox` stara verzija ne šalje (ostaje u tabeli; nova verzija ga pošalje kad se vrati, a
+  sniženja starija od dana su tada bespredmetna — po želji `delete from outbox where sent_at is null`). Ostale
+  tabele (`idempotency_keys`, `app_settings`) stara verzija ne koristi.
 - **Povratak na verziju prije migracije 010 (sigurnost, S-18).** Migracija 010 pretvara tokene sesija u
   sha256 (`api/migrations/010_sigurnost.sql`). Stara verzija traži sirovi token, pa poslije povratka **niko nije
   prijavljen** (prijava ponovo radi, ništa ne pada; feed, profili i `/api/me` rade). Sesije koje stara verzija
