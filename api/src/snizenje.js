@@ -3,7 +3,7 @@
 // 'snizenje' u outbox (zakaziSnizenje), pa se obavještenje ne gubi ni kad proces padne poslije odgovora butiku.
 // Posao outboxa (src/outbox.js) zove rasporediSnizenje: u serijama zauzme kupce i za svaku seriju upiše red 'push'
 // (najviše 100 poruka = jedan zahtjev prema Expo-u) — zauzimanje i upis su u istoj transakciji.
-import { poolPosao, uTransakciji } from './db.js';
+import { poolPosao, qPosao, uTransakciji } from './db.js';
 
 // Android kanal za sniženja (mobilni dio pravi kanal „snizenja”).
 const KANAL = () => process.env.PUSH_SNIZENJA_KANAL || 'snizenja';
@@ -44,9 +44,23 @@ export async function zakaziSnizenje(c, o) {
   await c.query("insert into outbox(vrsta, payload) values ('snizenje', $1::jsonb)", [JSON.stringify(o)]);
 }
 
-// Pretvara jedno sniženje u redove 'push'. Vraća broj zauzetih tokena. Ako proces padne usred posla, red
+// R3-08: sniženje važi samo dok oglas postoji, nije prodat, cijena je i dalje nova i butik nije ugašen. Ulaz: niz
+// { listingId, newCents }; izlaz: skup "listingId:newCents" koji važe (jedan upit za cijelu seriju).
+export async function snizenjeVazi(lista) {
+  if (!lista.length) return new Set();
+  const res = await qPosao(
+    `select l.id, l.price_cents from listings l join users u on u.id = l.user_id
+      where l.id = any($1::int[]) and l.deleted_at is null and not l.sold and u.suspended_at is null`,
+    [[...new Set(lista.map((s) => Number(s.listingId)))]],
+  );
+  return new Set(res.rows.map((r) => `${r.id}:${r.price_cents}`));
+}
+
+// Pretvara jedno sniženje u redove 'push'. Vraća broj zauzetih tokena, ili −1 kad sniženje više ne važi (R3-08: oglas
+// obrisan ili prodat, cijena se u međuvremenu promijenila) — tada se ne zauzima niko i ne šalje ništa. Ako proces padne usred posla, red
 // 'snizenje' se ponovo obradi kad mu istekne zakup; već zauzeti kupci (price_notified_at) se ne zauzimaju dvaput.
 export async function rasporediSnizenje(o) {
+  if (!(await snizenjeVazi([o])).has(`${o.listingId}:${o.newCents}`)) return -1;
   const naslov = o.title.length > 50 ? `${o.title.slice(0, 49)}…` : o.title;
   const title = `Sniženje: ${naslov}`;
   const body = `${o.shopName}: ${km(o.oldCents)} → ${km(o.newCents)}`;
@@ -58,7 +72,7 @@ export async function rasporediSnizenje(o) {
         to: r.token, title, body, sound: 'default', channelId: KANAL(), data: { listingId: o.listingId },
       }));
       for (let i = 0; i < messages.length; i += PO_ZAHTJEVU) {
-        await c.query("insert into outbox(vrsta, payload) values ('push', $1::jsonb)", [JSON.stringify({ poruke: messages.slice(i, i + PO_ZAHTJEVU) })]);
+        await c.query("insert into outbox(vrsta, payload) values ('push', $1::jsonb)", [JSON.stringify({ poruke: messages.slice(i, i + PO_ZAHTJEVU), snizenje: { listingId: o.listingId, newCents: o.newCents } })]);
       }
       return res.rowCount;
     });

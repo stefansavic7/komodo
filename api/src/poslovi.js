@@ -218,10 +218,11 @@ async function cleanup() {
   await q(`delete from rate_limits where window_start < now() - interval '2 hours'
              and (key not like '%:dan:%' or window_start < now() - interval '25 hours')`);
   await q("delete from known_devices where seen_at < now() - interval '180 days'");
-  // Talas 4: ključevi protiv duplog slanja žive 24 h; poslani redovi outboxa 7 dana, mrtvi 30 dana (za uvid).
+  // Talas 4: ključevi protiv duplog slanja žive 24 h. Outbox (R3-07, payload poruke sadrži početak teksta poruke):
+  // poslani i odbačeni redovi se brišu 24 h poslije slanja, mrtvi 7 dana poslije upisa (za uvid u greške).
   await q("delete from idempotency_keys where created_at < now() - interval '24 hours'");
-  await q(`delete from outbox where (sent_at is not null and created_at < now() - interval '7 days')
-                                  or (dead_at is not null and created_at < now() - interval '30 days')`);
+  await q(`delete from outbox where (sent_at is not null and sent_at < now() - interval '24 hours')
+                                  or (dead_at is not null and created_at < now() - interval '7 days')`);
   await removeOrphanUploads();
   await removeStaleOg();
   for (let k = 0; k < 20; k += 1) {

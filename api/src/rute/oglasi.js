@@ -238,7 +238,7 @@ export default function rute(app) {
       [Number(req.params.id), user.id],
     );
     if (res.rowCount === 0) return bad(reply, 404, 'Ovaj oglas ne postoji ili nije tvoj.');
-    ocistiKesFeeda();
+    ocistiKesFeeda({ oglasi: [Number(req.params.id)] }); // R3-04: i iz zadnjeg dobrog keša
     await removeListingFiles(res.rows);
     return { ok: true };
   });

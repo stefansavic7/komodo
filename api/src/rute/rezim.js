@@ -41,9 +41,25 @@ export default function rute(app) {
     return konfig();
   });
 
+  // R3-09: uz stanje i zadnjih 10 promjena (ko, kada, staro → novo) iz tabele rezim_promjene (014).
+  const stanje = async () => {
+    const p = await q(
+      `select p.created_at, p.staro, p.novo, p.okolina, p.user_id, u.shop_name
+         from rezim_promjene p left join users u on u.id = p.user_id
+        order by p.id desc limit 10`,
+    );
+    return {
+      ...konfig(), okolina: rezimOkoline(), rezimi: REZIMI,
+      promjene: p.rows.map((r) => ({
+        at: r.created_at, staro: r.staro, novo: r.novo, okolina: r.okolina,
+        admin: r.user_id === null ? null : { id: r.user_id, name: r.shop_name },
+      })),
+    };
+  };
+
   app.get('/api/admin/rezim', async (req, reply) => {
     if (!isAdmin(await currentUser(req))) return bad(reply, 404, 'Ne postoji.');
-    return { ...konfig(), okolina: rezimOkoline(), rezimi: REZIMI };
+    return stanje();
   });
 
   // {rezim: 'normalno'|'stedi'|'hitno'} postavlja režim; {rezim: null} vraća na KOMODO_REZIM iz okoline.
@@ -52,18 +68,27 @@ export default function rute(app) {
     if (!isAdmin(user)) return bad(reply, 404, 'Ne postoji.');
     const r = (req.body || {}).rezim;
     if (r !== null && !REZIMI.includes(r)) return bad(reply, 400, 'Režim mora biti normalno, stedi ili hitno.');
+    const staro = rezim();
+    const novo = r === null ? rezimOkoline() : r;
+    // Promjena i zapis u dnevnik u istoj naredbi (R3-09): ko (id), kada, staro → novo.
     if (r === null) {
-      await q("delete from app_settings where key = 'rezim'");
+      await q(
+        `with d as (delete from app_settings where key = 'rezim')
+         insert into rezim_promjene(user_id, staro, novo, okolina) values ($1, $2, $3, true)`,
+        [user.id, staro, novo],
+      );
     } else {
       await q(
-        `insert into app_settings(key, value) values ('rezim', $1::jsonb)
-         on conflict (key) do update set value = excluded.value, updated_at = now()`,
-        [JSON.stringify(r)],
+        `with s as (insert into app_settings(key, value) values ('rezim', $1::jsonb)
+                    on conflict (key) do update set value = excluded.value, updated_at = now())
+         insert into rezim_promjene(user_id, staro, novo, okolina) values ($2, $3, $4, false)`,
+        [JSON.stringify(r), user.id, staro, novo],
       );
     }
     postaviRezimOvdje(r);
     javiSvima('rezim', r);
-    req.log.warn(`Režim rada: ${rezim()} (administrator ${user.email})`);
-    return { ...konfig(), okolina: rezimOkoline(), rezimi: REZIMI };
+    // U logu id administratora, ne email (lični podatak u logovima, R3-09).
+    req.log.warn({ adminId: user.id, staro, novo: rezim() }, `Režim rada: ${staro} → ${rezim()} (administrator id ${user.id})`);
+    return stanje();
   });
 }

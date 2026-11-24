@@ -485,6 +485,10 @@ describe('outbox: push o poruci se ne gubi', () => {
     rezim = 'ok';
     await api({ KOMODO_JOBS: '1', OUTBOX_MS: '100' });
     const prije = expo.poruke().length;
+    // R3-07/R3-08: pri slanju se tokeni provjeravaju u push_tokens, pa probni tokeni moraju postojati.
+    const v = (await baza.q("select u.id, s.token from users u join sessions s on s.user_id = u.id where u.email = 'outbox-kupac@test.ba' limit 1")).rows[0];
+    await baza.q(`insert into push_tokens(token, user_id, session_token)
+                  select 'ExponentPushToken[d' || g || ']', $1, $2 from generate_series(1, 300) g`, [v.id, v.token]);
     await baza.q(`insert into outbox(vrsta, payload)
                   select 'push', jsonb_build_object('poruke', jsonb_build_array(jsonb_build_object('to', 'ExponentPushToken[d' || g || ']', 'title', 't', 'body', 'b')))
                     from generate_series(1, 300) g`);

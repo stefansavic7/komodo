@@ -24,9 +24,9 @@ Počinje s buticima u Banjoj Luci. Vlasnik je Stefan; odvojen proizvod od Termin
 - v1 funkcije F-01 … F-09 su urađene (spisak i kriteriji: `docs/SPEC-V1.md`): feed „Za tebe/Novo/Praćeni”, pregled
   linka pri dijeljenju (OG), veličine i filter, praćenje butika, profil i radno vrijeme, statistika butika,
   sniženja s pushom, poruke (brza pitanja), brojke administratora.
-- Migracije su do 013 (`013_otpornost.sql`: `listing_likes_delta`, `outbox`, `idempotency_keys`, `app_settings`); **sljedeća je 014**. Plan do produkcije je u `docs/PLAN-PRODUKCIJA.md`, stanje i redoslijed
-  preostalog posla u `docs/NASTAVAK.md` (ako postoji), nalazi recenzija u `docs/RECENZIJA-1.md` i `docs/RECENZIJA-2.md` (stanje popravki na kraju).
-- Testovi: 241 API test, test istovremenosti, Playwright e2e (36), `mobile/navigacija.test.mjs` (`docs/TESTOVI.md`).
+- Migracije su do 014 (`013_otpornost.sql`: `listing_likes_delta`, `outbox`, `idempotency_keys`, `app_settings`; `014_recenzija3.sql`: `idempotency_keys.vlasnik`, `outbox.zakup`, `rezim_promjene`); **sljedeća je 015**. Plan do produkcije je u `docs/PLAN-PRODUKCIJA.md`, stanje i redoslijed
+  preostalog posla u `docs/NASTAVAK.md` (ako postoji), nalazi recenzija u `docs/RECENZIJA-1.md`, `docs/RECENZIJA-2.md` i `docs/RECENZIJA-3.md` (stanje popravki na kraju).
+- Testovi: 256 API testova, test istovremenosti, Playwright e2e (36), `mobile/navigacija.test.mjs` (`docs/TESTOVI.md`).
 - Talas 4 „otpornost” (24.11.): rokovi za upite i HTTP (503 + `Retry-After`, nikad 500), klijent s rasipanjem i
   sve dužim čekanjem, „veliki crveni prekidač” (`/api/config`, `KOMODO_REZIM`, Administracija → Režim rada;
   `docs/RUNBOOK.md` 4a), stari keš feeda kad baza ne odgovara, sviđanja kroz `listing_likes_delta`, push kroz

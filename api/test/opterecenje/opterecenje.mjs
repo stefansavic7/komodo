@@ -11,6 +11,8 @@
 //   VIRAL        id oglasa za like_viral (zadano LMIN)
 //   LIGHT=1      lakši klijent (tajmeri iz docs/SKALIRANJE.md); bez toga stari tajmeri
 //   FEED=1       (uz LIGHT=1) klijent v1: strane iz /api/feed?kartica=zatebe s izuzmi, sviđanja svakih 30 s (B-01)
+//   START_S      (uz LIGHT=1) korisnici otvaraju aplikaciju u nasumičnom trenutku 0–START_S s (zadano 30)
+//   PROZORI=1    uz izvještaj p95 po prozorima od 15 s
 // Izlazni kod 1 ako je bilo grešaka (5xx ili prekinuta veza).
 import http from 'node:http';
 import https from 'node:https';
@@ -44,10 +46,19 @@ function req(method, path, { user, ip, body } = {}) {
 }
 
 const stats = new Map();
+// PROZORI=1: uz izvještaj i p95 po prozorima od 15 s (feed posebno, ostale rute zajedno).
+const T_START = Date.now();
+const prozori = new Map();
 function rec(x) {
   const s = stats.get(x.name) || { n: 0, err: 0, ms: [] };
   s.n += 1; if (x.status === 0 || x.status >= 500) s.err += 1; s.ms.push(x.ms);
   stats.set(x.name, s);
+  if (process.env.PROZORI === '1') {
+    const w = Math.floor((Date.now() - T_START) / 15000);
+    const k = `${/feed|listings$/.test(x.name) ? 'feed' : 'ostalo'}|${w}`;
+    if (!prozori.has(k)) prozori.set(k, []);
+    prozori.get(k).push(x.ms);
+  }
 }
 function pct(a, p) { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))] || 0; }
 function report(secs) {
@@ -60,6 +71,12 @@ function report(secs) {
   rows.sort();
   console.log(rows.join('\n'));
   console.log(`UKUPNO ${total} zahtjeva, ${(total / secs).toFixed(0)}/s, greške ${errs}`);
+  if (prozori.size) {
+    for (const vrsta of ['feed', 'ostalo']) {
+      const w = [...prozori.keys()].filter((k) => k.startsWith(`${vrsta}|`)).map((k) => Number(k.split('|')[1])).sort((a, b) => a - b);
+      console.log(`p95 po 15 s (${vrsta}): ${w.map((i) => `${i * 15}s:${pct(prozori.get(`${vrsta}|${i}`), 0.95).toFixed(0)}/${prozori.get(`${vrsta}|${i}`).length}`).join(' ')}`);
+    }
+  }
   return errs;
 }
 
@@ -124,12 +141,20 @@ async function vuser(u, end) {
   }
 }
 
-// Lakša verzija klijenta (prijedlog): sviđanja samo za oglas na ekranu svakih 15 s, pregledi skupljeni
-// u jedan zahtjev svakih 30 s, /api/me svakih 60 s, nova strana svakih 20 videa, sviđanje svakog 10. videa.
+// Lakša verzija klijenta (LIGHT=1): sviđanja samo za oglas na ekranu (15 s; s FEED=1 30 s), pregledi skupljeni u
+// jedan zahtjev svakih 30 s, /api/me svakih 60 s, nova strana svakih 20 videa, sviđanje svakog 10. videa.
+// Rasipanje kao pravi klijent (web/js/osnova.js, `tajmer`; nalaz iz docs/RECENZIJA-3.md, „Mjerenja”):
+//   - korisnik otvara aplikaciju u nasumičnom trenutku 0–START_S s (zadano 30) — prva strana feeda i /api/me tada;
+//   - prvi poziv svakog tajmera u nasumičnom trenutku 20–100 % intervala, svaki sljedeći interval ±20 %.
+// Bez toga svi tajmeri 10.000 korisnika okidaju u istih 15 s i p95 mjeri sinhronizovane talase generatora, ne API.
+// Sljedeća strana feeda dolazi poslije 20 videa (~160 s), pa mjerenje mora trajati ≥ 180 s (README.md).
+const START_MS = Number(process.env.START_S ?? 30) * 1000;
+const razmak = (ms) => Math.round(ms * (0.8 + Math.random() * 0.4));
+const prvi = (ms) => Math.round(ms * (0.2 + Math.random() * 0.8));
 async function vuserLight(u, end) {
   const ip = `10.${u % 250}.${Math.floor(u / 250) % 250}.${(u % 7) + 1}`;
   const o = { user: u, ip };
-  await sleep(rnd(0, 15000));
+  await sleep(rnd(0, START_MS));
   const FEED = process.env.FEED === '1';
   const LIKES_MS = FEED ? 30000 : 15000;
   const shown = [];
@@ -141,12 +166,13 @@ async function vuserLight(u, end) {
   };
   rec(await req('GET', '/api/me', o));
   rec(await page());
-  let tLikes = Date.now() + LIKES_MS, tMe = Date.now() + 60000, tViews = Date.now() + 30000, tVideo = Date.now() + 8000, seen = 0;
+  const t0 = Date.now();
+  let tLikes = t0 + prvi(LIKES_MS), tMe = t0 + prvi(60000), tViews = t0 + prvi(30000), tVideo = t0 + rnd(6000, 10000), seen = 0;
   while (Date.now() < end) {
     const now = Date.now();
-    if (now >= tLikes) { rec(await req('GET', `/api/likes?ids=${rnd(LISTING_MIN, LISTING_MAX)}`, o)); tLikes += LIKES_MS; }
-    if (now >= tMe) { rec(await req('GET', '/api/me', o)); tMe += 60000; }
-    if (now >= tViews) { rec(await req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/view`, o)); tViews += 30000; }
+    if (now >= tLikes) { rec(await req('GET', `/api/likes?ids=${rnd(LISTING_MIN, LISTING_MAX)}`, o)); tLikes = Date.now() + razmak(LIKES_MS); }
+    if (now >= tMe) { rec(await req('GET', '/api/me', o)); tMe = Date.now() + razmak(60000); }
+    if (now >= tViews) { rec(await req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/view`, o)); tViews = Date.now() + razmak(30000); }
     if (now >= tVideo) {
       if (Math.random() < 0.1) rec(await req('POST', `/api/listings/${rnd(LISTING_MIN, LISTING_MAX)}/like`, o));
       seen += 1;
@@ -167,7 +193,10 @@ async function mix(n, secs) {
 const [mode, a, b, c] = process.argv.slice(2);
 let greske;
 if (mode === 'endpoint' && ENDPOINTS[a] && Number(b) > 0 && Number(c) > 0) greske = await endpoint(a, Number(b), Number(c));
-else if (mode === 'mix' && Number(a) > 0 && Number(b) > 0) greske = await mix(Number(a), Number(b));
+else if (mode === 'mix' && Number(a) > 0 && Number(b) > 0) {
+  if (Number(b) < 180) console.error('Upozorenje: mix kraći od 180 s ne obuhvata sljedeće strane feeda (README.md); p95 nije uporediv.');
+  greske = await mix(Number(a), Number(b));
+}
 else {
   console.error('Upotreba: opterecenje.mjs endpoint <' + Object.keys(ENDPOINTS).join('|') + '> <istovremeno> <sekundi>');
   console.error('          opterecenje.mjs mix <korisnika> <sekundi>');

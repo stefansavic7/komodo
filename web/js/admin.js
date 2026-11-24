@@ -42,7 +42,8 @@ function ugradiRezim() {
     '<button type="button" class="btn" data-rezim="normalno" aria-pressed="false">Normalno</button>' +
     '<button type="button" class="btn" data-rezim="stedi" aria-pressed="false">Štedni</button>' +
     '<button type="button" class="btn btn-danger" data-rezim="hitno" aria-pressed="false">Hitni</button></div>' +
-    '<button type="button" class="btn" id="admRezimOkolina">Vrati na podešavanje servera</button>';
+    '<button type="button" class="btn" id="admRezimOkolina">Vrati na podešavanje servera</button>' +
+    '<h3>Zadnje promjene</h3><ul class="hint" id="admRezimPromjene"></ul>';
   var stats = $('#admStats');
   admin.insertBefore(box, stats ? stats.nextSibling : $('#adminBack').nextSibling);
   $('#admRezim').addEventListener('click', function (e) {
@@ -65,6 +66,12 @@ function paintRezim(d) {
     bs[k].classList.toggle('btn-main', on && d.rezim !== 'hitno');
   }
   $('#admRezimHint').textContent = 'Sada: ' + REZIM_OPIS[d.rezim] + ' Podešavanje servera (KOMODO_REZIM): ' + d.okolina + '. Klijenti ga vide za najviše ~1 min.';
+  // R3-09: ko je i kada mijenjao režim (zadnjih 10, iz baze).
+  var p = d.promjene || [];
+  $('#admRezimPromjene').innerHTML = p.length ? p.map(function (x) {
+    return '<li>' + esc(new Date(x.at).toLocaleString('bs-BA')) + ': ' + esc(x.staro) + ' → ' + esc(x.novo) +
+      (x.okolina ? ' (podešavanje servera)' : '') + ' — ' + esc(x.admin ? x.admin.name : 'obrisan nalog') + '</li>';
+  }).join('') : '<li>Još nema promjena.</li>';
 }
 function loadRezim() {
   api('GET', '/api/admin/rezim').then(paintRezim).catch(function (err) { $('#admRezimHint').textContent = err.message; });

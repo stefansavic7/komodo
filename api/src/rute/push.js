@@ -6,26 +6,66 @@ export const PO_ZAHTJEVU = 100; // poruka u jednom zahtjevu prema Expo-u
 
 // Jedan zahtjev prema Expo-u (najviše PO_ZAHTJEVU poruka): zaglavlja, EXPO_ACCESS_TOKEN (S-09), EXPO_PUSH_URL
 // (testovi, lažni Expo), rok od 10 s. Tokeni koje Expo prijavi kao DeviceNotRegistered brišu se iz baze.
-// Baca grešku kad zahtjev ne uspije (mreža, rok, HTTP 429/5xx…), da outbox (src/outbox.js) pokuša ponovo.
+// Vraća niz ishoda, po jedan za svaku poruku: { ok: true } | { greska, privremena } (greška u tiketu).
+// Baca ExpoGreska kad Expo odbije cijeli zahtjev ili zahtjev ne uspije: `privremena` = mreža, rok, HTTP 429 ili 5xx
+// (ponovo kasnije; i 401/403); inače (4xx) zahtjev neće proći ni ponovljen — outbox ga tada dijeli (src/outbox.js, R3-02).
+//
+// Ugovor Expo-a (docs.expo.dev/push-notifications/sending-notifications, provjereno 24.11.2026.): neuspio zahtjev ima
+// HTTP 4xx/5xx i tijelo { errors: [{ code, message, details? }] }; 429 i 5xx su privremeni (ponoviti s rastućim
+// čekanjem), 400 se ne popravlja sam; PUSH_TOO_MANY_EXPERIENCE_IDS = tokeni iz više Expo projekata u istom
+// zahtjevu, `details` = { "<projekat>": [tokeni] }. Greške po poruci u tiketu: DeviceNotRegistered (token ne važi),
+// MessageRateExceeded (ponoviti s rastućim čekanjem), MessageTooBig, InvalidCredentials, MismatchSenderId.
+export class ExpoGreska extends Error {
+  constructor(message, { status = 0, privremena = true, kod = null, details = null } = {}) {
+    super(message);
+    this.status = status;
+    this.privremena = privremena;
+    this.kod = kod;
+    this.details = details;
+  }
+}
+
+const PRIVREMENE_U_TIKETU = new Set(['MessageRateExceeded']);
+
 export async function posaljiPushSeriju(serija) {
   const url = process.env.EXPO_PUSH_URL || 'https://exp.host/--/api/v2/push/send';
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json', Accept: 'application/json',
-      ...(process.env.EXPO_ACCESS_TOKEN ? { Authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}),
-    },
-    body: JSON.stringify(serija),
-    signal: AbortSignal.timeout(10000),
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', Accept: 'application/json',
+        ...(process.env.EXPO_ACCESS_TOKEN ? { Authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}),
+      },
+      body: JSON.stringify(serija),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err) {
+    throw new ExpoGreska(`Expo nije dostupan: ${err.message}`);
+  }
   const out = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(`Expo je odgovorio ${resp.status}`);
+  if (!resp.ok) {
+    const e = Array.isArray(out.errors) && out.errors[0] ? out.errors[0] : {};
+    throw new ExpoGreska(`Expo je odgovorio ${resp.status}${e.code ? ` (${e.code})` : ''}`, {
+      status: resp.status,
+      // 401/403: ključ (EXPO_ACCESS_TOKEN) ili podešavanje — ne krivica pojedinog tokena, pa ponovo kao privremena.
+      privremena: resp.status === 429 || resp.status >= 500 || resp.status === 401 || resp.status === 403,
+      kod: e.code || null,
+      details: e.details || null,
+    });
+  }
   const tickets = Array.isArray(out.data) ? out.data : [];
   const mrtvi = [];
-  for (let k = 0; k < tickets.length; k += 1) {
-    if (tickets[k].status === 'error' && tickets[k].details?.error === 'DeviceNotRegistered') mrtvi.push(serija[k].to);
-  }
+  const ishodi = serija.map((m, k) => {
+    const t = tickets[k];
+    if (!t) return { greska: 'Expo nije vratio tiket', privremena: true };
+    if (t.status !== 'error') return { ok: true };
+    const greska = (t.details && t.details.error) || t.message || 'greška';
+    if (greska === 'DeviceNotRegistered') mrtvi.push(m.to);
+    return { greska, privremena: PRIVREMENE_U_TIKETU.has(greska) };
+  });
   if (mrtvi.length) await qPosao('delete from push_tokens where token = any($1::text[])', [mrtvi]);
+  return ishodi;
 }
 
 // Opšte slanje bez ponovnog pokušaja: niz Expo poruka u serijama po PO_ZAHTJEVU; greške samo bilježi.

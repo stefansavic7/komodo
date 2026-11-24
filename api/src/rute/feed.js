@@ -21,44 +21,90 @@ const KAND_TTL = 60 * 1000;
 const KAND_MAX = 100;
 const kandCache = new Map();
 
-function clearHere() {
+// `ukloni` (R3-04): { oglasi: [id], butici: [id] } — oglasi koji su upravo obrisani ili ugašeni (i svi oglasi
+// ugašenih/obrisanih butika). Izbacuju se i iz zadnjeg dobrog keša, da ih neprijavljeni ne vide ponovo kad baza zapne.
+function clearHere(ukloni) {
   feedCache.clear();
   kandCache.clear();
   ocistiKesOgOvdje();
+  if (ukloni && typeof ukloni === 'object') izbaciIzZadnjegDobrog(ukloni);
 }
 naPoruku('feed', clearHere);
 
 // Poslije objave, izmjene i brisanja oglasa, gašenja naloga (administrator) i brisanja naloga: ovaj proces
-// odmah, ostali preko poruke (src/index.js). Briše i keš pregleda linka (OG, R2-03).
-export function ocistiKesFeeda() {
-  clearHere();
-  javiSvima('feed', 1);
+// odmah, ostali preko poruke (src/index.js). Briše i keš pregleda linka (OG, R2-03). Kod brisanja i gašenja
+// `ukloni` = { oglasi: [id…] } i/ili { butici: [id…] } (R3-04).
+export function ocistiKesFeeda(ukloni) {
+  const u = ukloni ? { oglasi: (ukloni.oglasi || []).map(Number), butici: (ukloni.butici || []).map(Number) } : null;
+  clearHere(u);
+  javiSvima('feed', u || 1);
 }
 
 // Zadnji uspješno učitan sadržaj svakog ključa (talas 4): kad baza ne odgovara (istekao rok, nema veze), javni feed
-// služi njega umjesto greške, uz zaglavlje X-Komodo-Zastarjelo: 1. Ne briše se pri ocistiKesFeeda (bolje star
-// feed nego greška), ali se ne koristi dok baza radi. Ograničen kao i keš.
+// služi njega umjesto greške, uz zaglavlje X-Komodo-Zastarjelo: 1. Pri ocistiKesFeeda se ne briše cijeli (bolje star
+// feed nego greška), ali iz njega ispadaju obrisani i ugašeni oglasi i oglasi ugašenih butika (R3-04). Ne koristi se
+// dok baza radi. Ograničen kao i keš.
 const zadnjeDobro = new Map();
+
+function izbaciIzZadnjegDobrog({ oglasi = [], butici = [] }) {
+  if (!oglasi.length && !butici.length) return;
+  const o = new Set(oglasi);
+  const b = new Set(butici);
+  const ostaje = (r) => !o.has(Number(r.id)) && !b.has(Number(r.user_id));
+  for (const [k, v] of zadnjeDobro) {
+    if (Array.isArray(v)) zadnjeDobro.set(k, v.filter(ostaje));
+    else if (v && Array.isArray(v.C)) zadnjeDobro.set(k, { C: v.C.filter(ostaje), D: v.D.filter(ostaje) });
+  }
+}
+
+// „Prekidač kola” (R3-04): poslije greške „baza ne odgovara” u feedu, sljedećih FEED_PREKIDAC_MS (zadano 10 s) zahtjevi
+// za ključ koji ima zadnji dobar sadržaj dobijaju ga odmah, bez čekanja na bazu (inače bi svaki čekao do roka upita,
+// 5 s). Za to vrijeme bazu po ključu „pipka” najviše jedan upit u pozadini (isti kao inače, dijeli se kroz keš):
+// čim jedan uspije, prekidač se zatvara i svi opet dobijaju svjež sadržaj; svaka nova greška ga produžava.
+const PREKIDAC_MS = Number(process.env.FEED_PREKIDAC_MS) || 10 * 1000;
+let prekidacDo = 0;
+function otvoriPrekidac() { prekidacDo = Date.now() + PREKIDAC_MS; }
+export function prekidacOtvoren() { return prekidacDo > Date.now(); }
 
 function cached(map, key, ttl, limit, load) {
   const hit = map.get(key);
   if (hit && hit.exp > Date.now()) return hit.value;
   const value = load();
-  boundedSet(map, key, { value, exp: Date.now() + ttl }, limit);
+  const unos = { value, exp: Date.now() + ttl, gotov: false };
+  boundedSet(map, key, unos, limit);
   value.then(
-    (v) => { boundedSet(zadnjeDobro, `${map === kandCache ? 'k' : 'f'}|${key}`, v, FEED_CACHE_MAX + KAND_MAX); },
-    () => { if (map.get(key)?.value === value) map.delete(key); },
+    (v) => {
+      unos.gotov = true;
+      prekidacDo = 0; // baza je odgovorila
+      boundedSet(zadnjeDobro, `${map === kandCache ? 'k' : 'f'}|${key}`, v, FEED_CACHE_MAX + KAND_MAX);
+    },
+    (err) => {
+      if (bazaNeOdgovara(err)) otvoriPrekidac();
+      if (map.get(key)?.value === value) map.delete(key);
+    },
   );
   return value;
 }
 
 // Kao cached, ali kad baza ne odgovara vraća zadnji dobar sadržaj i javlja to kroz zastarjelo() (zaglavlje).
 async function cachedIliStaro(map, key, ttl, limit, load, zastarjelo) {
+  const kljucStaro = `${map === kandCache ? 'k' : 'f'}|${key}`;
+  if (prekidacOtvoren()) {
+    const hit = map.get(key);
+    const staro = zadnjeDobro.get(kljucStaro);
+    if (staro && !(hit && hit.exp > Date.now() && hit.gotov)) {
+      // Upit u pozadini (ako za ovaj ključ već ne radi jedan); greška se ovdje ne čeka.
+      if (!hit || hit.exp <= Date.now()) cached(map, key, ttl, limit, load).catch(() => {});
+      if (zastarjelo) zastarjelo();
+      return staro;
+    }
+  }
   try {
     return await cached(map, key, ttl, limit, load);
   } catch (err) {
-    const staro = zadnjeDobro.get(`${map === kandCache ? 'k' : 'f'}|${key}`);
-    if (!staro || !bazaNeOdgovara(err)) throw err;
+    if (!bazaNeOdgovara(err)) throw err;
+    const staro = zadnjeDobro.get(kljucStaro);
+    if (!staro) throw err;
     if (zastarjelo) zastarjelo();
     return staro;
   }
@@ -308,12 +354,15 @@ export default function rute(app) {
     const did = user ? null : knownDeviceId(req);
     const viewer = user ? `u${user.id}` : (did ? `d${did}` : null);
     let licno = PRAZNO;
-    if (C.length || D.length) {
+    if ((C.length || D.length) && !user && prekidacOtvoren()) {
+      zastarjelo(); // baza nije odgovarala prije manje od 10 s: neprijavljeni bez ličnih faktora, bez čekanja
+    } else if (C.length || D.length) {
       try {
         licno = await licniFaktori(user ? user.id : 0, viewer);
       } catch (err) {
         // Neprijavljen gledalac kad baza ne odgovara: strana bez ličnih faktora umjesto greške.
         if (user || !bazaNeOdgovara(err)) throw err;
+        otvoriPrekidac();
         zastarjelo();
       }
     }

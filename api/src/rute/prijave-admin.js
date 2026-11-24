@@ -87,6 +87,8 @@ export default function rute(app) {
     if ((req.body || {}).action === 'ukloni') {
       if (r.listing_id) {
         const del = await q(`update listings set deleted_at = now() where id = $1 and deleted_at is null returning ${VIDEO_COLS}`, [r.listing_id]);
+        // R3-04: uklonjen oglas odmah iz feeda i iz zadnjeg dobrog keša (svi procesi).
+        if (del.rowCount) ocistiKesFeeda({ oglasi: [r.listing_id] });
         await removeListingFiles(del.rows);
         await q('update reports set resolved_at = now() where listing_id = $1 and resolved_at is null', [r.listing_id]);
       } else {
@@ -145,7 +147,7 @@ export default function rute(app) {
     if (res.rowCount === 0) return bad(reply, 404, 'Ovaj nalog ne postoji.');
     if (suspended) await q('delete from sessions where user_id = $1', [id]);
     forgetUser(id);
-    ocistiKesFeeda(); // R2-03: oglasi ugašenog (ili vraćenog) butika odmah iz/u feed i pregled linka, svi procesi
+    ocistiKesFeeda(suspended ? { butici: [id] } : undefined); // R2-03, R3-04: oglasi ugašenog (ili vraćenog) butika odmah iz/u feed i pregled linka, svi procesi
     return { ok: true, suspended };
   });
 }

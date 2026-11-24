@@ -10,7 +10,7 @@ import Fastify, { LogController } from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
-import { pool, q, uTransakciji } from './db.js';
+import { pool, q, qPosao, uTransakciji } from './db.js';
 import { sendMail } from './mail.js';
 import { cleanLine } from './nalog.js';
 import { provjeriOkolinu } from './provjera.js';
@@ -290,12 +290,15 @@ app.addHook('onSend', (req, reply, payload, done) => {
   if (req.url.startsWith('/api/')) reply.header('X-Komodo-Rezim', rezimSada);
   const args = req.komodoIdem;
   if (!args) { done(null, payload); return; }
-  // Odgovor zahtjeva koji je zauzeo ključ: 2xx se sačuva, sve ostalo briše ključ.
+  // Odgovor zahtjeva koji je zauzeo ključ: 2xx se sačuva, sve ostalo briše ključ (samo ako je ključ još njegov —
+  // vlasnik, R3-01). Brisanje koje ne uspije (baza i dalje ne odgovara) se ponavlja u pozadini (obrisiKljuc).
   req.komodoIdem = null;
-  const sql = code >= 200 && code < 300 && typeof payload === 'string'
-    ? q('update idempotency_keys set status = $4, odgovor = $5 where user_id = $1 and ruta = $2 and kljuc = $3', [...args, code, payload])
-    : q('delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args);
-  sql.then(() => done(null, payload), () => done(null, payload));
+  if (code >= 200 && code < 300 && typeof payload === 'string') {
+    q('update idempotency_keys set status = $5, odgovor = $6 where user_id = $1 and ruta = $2 and kljuc = $3 and vlasnik = $4', [...args, code, payload])
+      .then(() => done(null, payload), () => done(null, payload));
+  } else {
+    obrisiKljuc(args).then(() => done(null, payload));
+  }
 });
 await app.register(multipart, { limits: { fileSize: MAX_VIDEO_MB * 1024 * 1024, files: 1, fields: 10 } });
 await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: '/media/', decorateReply: false, maxAge: '7d' });
@@ -517,10 +520,50 @@ export async function myConversation(userId, id) {
 // web/js/poruke.js i objava.js). Isti ključ istog korisnika za istu rutu u 24 h vraća sačuvan odgovor (isti
 // status i tijelo, zaglavlje Idempotent-Replay: true) bez ponovnog upisa. Dok prvi zahtjev još radi, drugi dobija
 // 409 s Retry-After. Čuvaju se samo uspješni odgovori (2xx); greška (400, 429, 5xx, prekinut upload) briše ključ,
-// pa isti ključ smije pokušati ponovo. Bez zaglavlja ruta radi kao ranije. Tabela idempotency_keys (013),
+// pa isti ključ smije pokušati ponovo. Bez zaglavlja ruta radi kao ranije. Tabela idempotency_keys (013, 014),
 // čišćenje starijih od 24 h u poslovi.js.
+//
+// R3-01 (zaglavljen ključ): ključ ostaje „u toku” (status null) kad brisanje poslije greške ne uspije (baza i dalje
+// ne odgovara) ili kad proces padne usred zahtjeva. Zato:
+//   1. brisanje poslije greške se ponavlja u pozadini kroz bazen poslova (obrisiKljuc: 1, 2, 4 … 32 s), izvan
+//      zahtjeva čiji je upit istekao;
+//   2. svaka ruta ima rok „u toku” (rokUToku): poslije njega ključ preuzima sljedeći zahtjev s istim ključem
+//      (jedna naredba: insert … on conflict do update … where istekao), uz novu oznaku vlasnika;
+//   3. stari zahtjev, ako ipak završi poslije preuzimanja, ne upisuje odgovor i ne briše ključ (where vlasnik = …).
 const IDEM_RE = /^[A-Za-z0-9_-]{8,100}$/;
-const IDEM_ZAGLAVLJEN_MIN = 35; // zahtjev „u toku” duže od roka za cijeli zahtjev (30 min) je mrtav
+
+// Rok „u toku” u sekundama, po ruti.
+// - poruka: 60 s. Zahtjev bez uploada ima ~7 upita, svaki najviše PG_STATEMENT_TIMEOUT_MS (5 s) — a čim jedan istekne,
+//   zahtjev završava s 503. I zahtjev kome svaki upit traje skoro do roka završi za ~35 s, pa 60 s ima rezervu, a
+//   korisnik koji je dobio 503 može poslati istu poruku najkasnije za minut i kad brisanje ključa ne uspije.
+// - objava: najduži dozvoljen upload je HTTP_REQUEST_TIMEOUT_MS (zadano 30 min, za 110 MB pri ~0,5 Mbit/s); poslije
+//   toga Fastify sam prekida zahtjev. Rok = taj rok + 2 min (upis oglasa i pokretanje slanja na Bunny poslije
+//   uploada). Kraći rok bi dozvolio da dva uploada istog snimka teku istovremeno (dupli oglas). Kad je rok za
+//   zahtjev isključen (0), 35 min kao ranije. U praksi objava poslije neuspjeha ne čeka ovaj rok: ključ se obriše
+//   (tačka 1) čim baza proradi.
+const REQUEST_TIMEOUT_MS = msIzOkoline('HTTP_REQUEST_TIMEOUT_MS', 30 * 60 * 1000);
+export function rokUToku(ruta) {
+  if (ruta === 'poruka') return Number(process.env.IDEM_ROK_PORUKA_S) || 60;
+  return REQUEST_TIMEOUT_MS > 0 ? Math.round(REQUEST_TIMEOUT_MS / 1000) + 120 : 35 * 60;
+}
+
+// Briše ključ zahtjeva koji nije uspio (args = [user_id, ruta, kljuc, vlasnik]). Prvi pokušaj odmah (bazen API-ja);
+// ako ne uspije, ponovo u pozadini kroz bazen poslova (duži rok, ne zauzima veze API-ja) poslije 1, 2, 4, 8, 16 i
+// 32 s. Ne baca grešku. Vraća obećanje prvog pokušaja.
+const OBRISI_KLJUC_SQL = 'delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3 and vlasnik = $4';
+export function obrisiKljuc(args, log = app.log) {
+  const ponovo = (pokusaj) => {
+    if (pokusaj > 6) {
+      log.warn({ ruta: args[1] }, 'Idempotency-Key nije obrisan ni poslije 6 pokušaja; ističe sam (rok „u toku”)');
+      return;
+    }
+    const t = setTimeout(() => {
+      qPosao(OBRISI_KLJUC_SQL, args).catch(() => ponovo(pokusaj + 1));
+    }, 1000 * 2 ** (pokusaj - 1));
+    t.unref();
+  };
+  return q(OBRISI_KLJUC_SQL, args).then(() => {}, () => { ponovo(1); });
+}
 
 async function procitajTijeloDoKraja(req) {
   // Ponovljena objava (multipart): tijelo se pročita i baci, da klijent dobije odgovor, a ne prekinutu vezu.
@@ -538,32 +581,32 @@ export function idempotentno(ruta, handler) {
     const user = await currentUser(req);
     if (!user) return handler.call(this, req, reply);
     const args = [user.id, ruta, kljuc];
+    const vlasnik = randomBytes(9).toString('base64url');
     for (let pokusaj = 0; pokusaj < 3; pokusaj += 1) {
+      // Novi ključ, ili preuzimanje ključa koji je star (24 h) ili je „u toku” duže od roka rute (R3-01).
       const ins = await q(
-        'insert into idempotency_keys(user_id, ruta, kljuc) values ($1, $2, $3) on conflict do nothing returning 1', args,
+        `insert into idempotency_keys(user_id, ruta, kljuc, vlasnik) values ($1, $2, $3, $4)
+         on conflict (user_id, ruta, kljuc) do update
+            set vlasnik = excluded.vlasnik, created_at = now(), status = null, odgovor = null
+          where idempotency_keys.created_at < now() - interval '24 hours'
+             or (idempotency_keys.status is null and idempotency_keys.created_at < now() - make_interval(secs => $5))
+         returning 1`,
+        [...args, vlasnik, rokUToku(ruta)],
       );
       if (ins.rowCount === 1) {
-        req.komodoIdem = args;
+        const moji = [...args, vlasnik];
+        req.komodoIdem = moji;
         try {
           return await handler.call(this, req, reply);
         } catch (err) {
           req.komodoIdem = null;
-          await q('delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args).catch(() => {});
+          await obrisiKljuc(moji, req.log);
           throw err;
         }
       }
-      const old = await q(
-        `select status, odgovor, created_at < now() - interval '24 hours' as star,
-                (status is null and created_at < now() - make_interval(mins => $4)) as zaglavljen
-           from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3`,
-        [...args, IDEM_ZAGLAVLJEN_MIN],
-      );
+      const old = await q('select status, odgovor from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args);
       if (old.rowCount === 0) continue; // upravo obrisan (greška prvog zahtjeva): pokušaj ponovo
       const r = old.rows[0];
-      if (r.star || r.zaglavljen) {
-        await q('delete from idempotency_keys where user_id = $1 and ruta = $2 and kljuc = $3', args);
-        continue;
-      }
       await procitajTijeloDoKraja(req);
       if (r.status === null) {
         reply.header('Retry-After', '2');

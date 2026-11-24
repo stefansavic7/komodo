@@ -6,7 +6,7 @@ pokrenu API kao poseban proces (`api/src/server.js`), a na kraju ga ugase i bazu
 
 | Šta | Gdje | Pokretanje (iz foldera) |
 |---|---|---|
-| API testovi (node:test, 241 test u 19 fajlova, ~45 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
+| API testovi (node:test, 256 testova u 20 fajlova, ~45–55 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
 | Test istovremenosti | `api/test/opterecenje/istovremenost.mjs` | `api`: `npm run test:istovremenost` |
 | Test opterećenja | `api/test/opterecenje/opterecenje.mjs` | vidi `api/test/opterecenje/README.md` |
 | Punjenje probne baze (samo lokalno) | `api/test/opterecenje/napuni-bazu.mjs` | vidi isti README |
@@ -16,9 +16,9 @@ pokrenu API kao poseban proces (`api/src/server.js`), a na kraju ga ugase i bazu
 
 ## Spisak test fajlova (stanje 24.11.2026.)
 
-API (`api/test/`, ukupno 241): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
+API (`api/test/`, ukupno 256): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
 `butik-profil` 8, `butik-sati` 11, `feed-algoritam` 16, `feed-r01-klaster` 4, `nalog` 23, `og-pregled` 15,
-`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `otpornost` 19, `poruke-r04-blokiranje` 7, `poruke` 14, `sigurnost` 15,
+`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `otpornost` 19, `poruke-r04-blokiranje` 7, `poruke` 14, `recenzija3` 15, `sigurnost` 15,
 `statistika-admin` 7, `statistika-me` 8.
 
 E2E (`tests/e2e/`): `admin`, `butik-profil`, `butik`, `feed`, `feed-kraj`, `kupac`, `nadogradnja`, `oglas`,
@@ -47,6 +47,22 @@ poruke poslije pukle veze; tajmer poslije 503 + `Retry-After: 2` (razmaci ≥ 2 
 normalno s rasipanjem; `X-Komodo-Rezim: hitno` → `/api/config?r=hitno`, bez pregleda, „Za tebe” bez razdjelnika;
 prekidač u administraciji. Test istovremenosti pokreće API s poslovima (`KOMODO_JOBS=1`) i na kraju čeka da posao
 sabere sve razlike sviđanja, pa tek onda poredi `likes_count` s redovima.
+
+Dodano uz Recenziju 3 (`docs/RECENZIJA-3.md`, „Stanje popravki”): `recenzija3.test.mjs` — svaki test pada na kodu
+prije popravke. R3-03: spisak grešaka „baza ne odgovara” (55000 samo „not currently accepting connections”, ENOTFOUND
+ne). R3-01: dokaz iz recenzije (brava na `messages`, pa na `idempotency_keys`) → 503, ključ se obriše u pozadini čim
+brava popusti, isti ključ → 201 i tačno jedna poruka; ključ „u toku” stariji od 60 s se preuzima (poruka), objava
+ima duži rok, stari vlasnik ne briše tuđi ključ. Outbox s lažnim Expo-om koji odbija cijeli zahtjev (400
+`PUSH_TOO_MANY_EXPERIENCE_IDS` s `details`, ili 400 bez detalja): R3-02 — 29 od 30 primalaca dobije push, loš token
+obrisan; dva loša u 90 → 88 poslano; Expo odbija sve → tokeni ostaju, red čeka ponovni pokušaj. R3-08 —
+`MessageRateExceeded` → ponovo samo za taj token; red čiji je zakup preuzeo drugi prolaz se ne šalje; red stariji
+od 24 h se odbacuje; sniženje čija se cijena vratila i serija za oglas s drugom cijenom se ne šalju. R3-07 — čišćenje
+(poslani 24 h, mrtvi 7 dana), brisanje naloga briše redove razgovora i sniženja. R3-05 — `likesAll` s nesabranim
+razlikama. R3-06 — sviđanje dok `delete from likes` brisanja naloga čeka na bravu (deterministički: brava na
+postojeći red sviđanja) → 401, brojač 0 (bez brave na red korisnika ostaje +1; provjereno). R3-04 — obrisan oglas i
+oglasi ugašenog butika ne vraćaju se iz starog keša; dok je prekidač otvoren dva zahtjeva < 600 ms (prvi čeka rok
+1,5 s). R3-09 — dnevnik promjena režima i log bez emaila. `otpornost.test.mjs` („dva procesa × 300 redova”) sada
+upisuje i probne tokene u `push_tokens`, jer outbox pri slanju provjerava tokene.
 
 ## API testovi — šta pokrivaju (osnovni fajlovi; ostali su imenovani po temi, vidi spisak iznad)
 

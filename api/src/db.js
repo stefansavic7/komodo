@@ -81,16 +81,28 @@ export async function uTransakciji(p, fn) {
   }
 }
 
-// Greške koje znače „baza trenutno ne odgovara ili je preopterećena” (ne greška u kodu): istekao rok upita
-// (57014), prekinuta transakcija u mirovanju (25P03), baza se gasi ili ne prima veze (57P01–57P03, 53300, 08xxx),
-// istekao rok za dobijanje veze iz bazena, odbijena ili prekinuta TCP veza. API tada vraća 503 s Retry-After, a
-// javni feed služi zadnji keš (src/rute/feed.js).
+// Greške koje znače „baza trenutno ne odgovara ili je preopterećena” (ne greška u kodu ni u podešavanju), R3-03:
+//   57014 istekao rok upita (statement_timeout, i čekanje na bravu), 25P03 prekinuta transakcija u mirovanju,
+//   57P01/57P02/57P03 baza se gasi ili još ne prima veze, 53300 previše veza, 08xxx greške veze;
+//   mrežne: ECONNREFUSED (baza ne sluša), ECONNRESET/EPIPE (veza prekinuta), ETIMEDOUT; pg poruke za istekao rok
+//   za dobijanje veze iz bazena i prekinutu vezu.
+// Namjerno NISU tu: 55000 (object_not_in_prerequisite_state — npr. currval prije nextval: greška u kodu; izuzetak je
+// samo 55000 s porukom „is not currently accepting connections” pri spajanju, baza zatvorena za veze) i
+// ENOTFOUND/EAI_AGAIN (pogrešno ime servera baze: greška podešavanja). One ostaju 500 i `error` u logu, da ih nadzor
+// vidi, a javni feed za njih ne služi stari keš. API za ove iz liste vraća 503 s Retry-After, a javni feed zadnji keš
+// (src/rute/feed.js).
+const NE_ODGOVARA_KODOVI = new Set(['57014', '25P03', '57P01', '57P02', '57P03', '53300']);
+const NE_ODGOVARA_MREZA = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE']);
 export function bazaNeOdgovara(err) {
   if (!err) return false;
   const code = String(err.code || '');
-  if (['57014', '25P03', '57P01', '57P02', '57P03', '53300', '55000'].includes(code) || code.startsWith('08')) return true;
-  if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND'].includes(code)) return true;
+  if (NE_ODGOVARA_KODOVI.has(code) || /^08[0-9A-Z]{3}$/.test(code)) return true;
+  if (NE_ODGOVARA_MREZA.has(code)) return true;
   const msg = String(err.message || '');
+  // 55000 pri spajanju: „database … is not currently accepting connections” (baza zatvorena za veze — održavanje,
+  // `allow_connections false`). Samo ta poruka; ostale 55000 su greške u kodu.
+  if (code === '55000') return /is not currently accepting connections/i.test(msg);
+  if (code) return false; // drugi SQLSTATE ili sistemski kod: stvarna greška
   return /timeout exceeded when trying to connect|Connection terminated|connection timeout|Client has encountered a connection error/i.test(msg);
 }
 

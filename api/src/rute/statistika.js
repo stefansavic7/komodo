@@ -37,7 +37,8 @@ const STATS_SQL = `
   ol as (
     select l.id, l.title, l.price_cents, l.sold, l.created_at, l.video_path, l.video_provider, l.video_status,
            l.bunny_guid, l.video_res, coalesce(vl.n, 0) as views, coalesce(lk.n, 0) as likes,
-           coalesce(ct.n, 0) as contacts, l.views as views_all, l.likes_count as likes_all
+           -- R3-05: kao LISTING_SELECT — likes_count + razlike koje posao još nije sabrao.
+           coalesce(ct.n, 0) as contacts, l.views as views_all, (l.likes_count + coalesce((select sum(dd.delta) from listing_likes_delta dd where dd.listing_id = l.id), 0))::int as likes_all
       from listings l
       join my on my.id = l.id
       left join vl on vl.listing_id = l.id

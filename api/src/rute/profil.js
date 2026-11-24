@@ -95,6 +95,11 @@ export default function rute(app) {
       // Praćenje: redovi follows nestaju kaskadno, pa se u istoj transakciji umanjuju brojači onih koje
       // to dira — followers_count butika koje je korisnik pratio i following_count njegovih pratilaca
       // (ako je butik). Redovi korisnika se zaključavaju jednim upitom po id-ju, kao za listings.
+      // R3-06: zaključan red korisnika (FOR UPDATE) je i zaštita brojača sviđanja: upis u likes provjerava strani ključ
+      // s FOR KEY SHARE na users, pa sviđanje koje počne poslije ove naredbe čeka kraj brisanja i pada (23503 → 401),
+      // a ono koje je počelo prije, ova naredba čeka da se potvrdi, pa ga `delete from likes` ispod vidi i umanji.
+      // Bez ove brave sviđanje potvrđeno između `delete from likes` i `delete from users` nestaje kaskadno bez −1
+      // (test: recenzija3.test.mjs, „R3-06”).
       await c.query(
         `select id from users
           where id = $1
@@ -121,10 +126,21 @@ export default function rute(app) {
          insert into listing_likes_delta(listing_id, delta) select listing_id, -1 from d`,
         [user.id],
       );
+      // R3-07: push redovi u outboxu koji nose tekst poruka iz razgovora korisnika (u oba smjera) i sniženja
+      // njegovih oglasa (ako je butik) se brišu odmah, ne čekaju čišćenje. Serije sniženja ('push') sa tokenom
+      // korisnika se ne šalju jer se tokeni provjeravaju pri slanju (src/outbox.js), a red se briše za 24 h.
+      await c.query(
+        `delete from outbox
+          where (vrsta = 'poruka' and (payload->>'razgovor')::int in
+                  (select id from conversations where customer_id = $1 or shop_id = $1))
+             or (vrsta = 'poruka' and (payload->>'primalac')::int = $1)
+             or (vrsta = 'snizenje' and (payload->>'shopId')::int = $1)`,
+        [user.id],
+      );
       await c.query('delete from users where id = $1', [user.id]);
     });
     forgetUser(user.id);
-    if (files.rows.length) ocistiKesFeeda(); // R2-03: oglasi obrisanog butika odmah nestaju iz feeda i OG keša
+    if (files.rows.length) ocistiKesFeeda({ butici: [user.id] }); // R3-04, R2-03: oglasi obrisanog butika odmah nestaju iz feeda i OG keša
     await removeListingFiles(files.rows);
     reply.clearCookie('sid', { path: '/' });
     return { ok: true };

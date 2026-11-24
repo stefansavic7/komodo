@@ -112,7 +112,7 @@ Prva komanda pokazuje koji kod i koja putanja (polja reda: vrijeme, status, `rt=
 |---|---|---|
 | 502 | API ne radi ili se restartuje | `docker compose ps`, `docker compose logs api --tail 100`, `docker compose up -d` |
 | 504 | API odgovara sporije od 60 s (baza zaglavljena) | odjeljak 4 |
-| 503 | `/api/health`: baza ne odgovara; ili API: upit duži od 5 s / baza ne prima veze (u logu `Baza ne odgovara na vrijeme (503)`); ili Nginx: API ne odgovara (502/504 se šalju kao 503 s `Retry-After`) | `docker compose logs db --tail 50`, odjeljak 2; spora baza → odjeljak 4 i 4a |
+| 503 | `/api/health`: baza ne odgovara; ili API: upit duži od 5 s / baza ne prima veze (u logu `Baza ne odgovara na vrijeme (503)` — broj tih redova pratiti kao zaseban signal; greška u kodu ili podešavanju, npr. pogrešno ime servera baze, je 500, R3-03); ili Nginx: API ne odgovara (502/504 se šalju kao 503 s `Retry-After`) | `docker compose logs db --tail 50`, odjeljak 2; spora baza → odjeljak 4 i 4a |
 | 500 | greška u kodu (često poslije nove verzije) | logovi iznad; ako je počelo s objavom → odjeljak 10 i poruka backendu s redovima `"level":50` |
 
 `429` nije greška servera: to je ograničenje broja zahtjeva (Nginx ili API). Ako ga dobijaju mnogi pravi
@@ -180,7 +180,15 @@ Provjera: `curl -s https://komodo.ba/api/config` → `"rezim":"stedi"`.
   Mrtvi redovi (6 neuspjelih pokušaja) imaju razlog u koloni `greska`; ponovo ih pošalji s
   `update outbox set dead_at = null, pokusaja = 0, run_at = now() where dead_at is not null and created_at > now() - interval '1 day'`.
 
-Poslije talasa vrati `normalno` (aplikacija ili `.env`) i zapiši u dnevnik kada i zašto je režim mijenjan.
+- Push stariji od 24 h se ne šalje (u `greska` piše „isteklo”), a sniženje se ne šalje ako je oglas u međuvremenu
+  obrisan/prodat ili mu je cijena promijenjena („ne važi”). Token koji Expo sam odbije (npr. iz druge Expo
+  aplikacije) se briše iz `push_tokens` (u logu „obrisano N push tokena koje je Expo odbio”). Ako u logu piše
+  „Expo je odbio … a nijednu nije prihvatio” — problem je u ključu (`EXPO_ACCESS_TOKEN`) ili formatu, ne u
+  korisnicima: javi backendu.
+
+Poslije talasa vrati `normalno` (aplikacija ili `.env`) i zapiši u dnevnik kada i zašto je režim mijenjan. Ko je i
+kada mijenjao režim iz aplikacije vidi se u Administraciji („Zadnje promjene”) i u bazi:
+`docker compose exec db psql -U komodo -d komodo -c "select created_at, user_id, staro, novo, okolina from rezim_promjene order by id desc limit 10"`.
 
 ## 5. Bunny ne radi (oglasi ostaju „Obrađuje se”)
 
@@ -498,6 +506,9 @@ već preuzeli ne kontrolišemo.
 | Nginx dnevnik (IP adresa, putanja bez upita, vrijeme) | 14 dana | `/etc/logrotate.d/nginx` (Ubuntu) |
 | Docker dnevnici API-ja i baze | 3 × 10 MB po kontejneru | `docker-compose.yml` |
 | Snimci na našem serveru | dok Bunny ne obradi + 30 min | API |
+| Push o poruci u bazi (`outbox`: primalac, ime pošiljaoca, prvih 140 znakova poruke) | dok se ne pošalje; tekst se briše pri slanju, red 24 h poslije slanja; neposlan (mrtav) 7 dana; pri brisanju naloga odmah | API (`poslovi.js`, `cleanup`; `rute/profil.js`) |
+| Ključevi protiv duplog slanja (`idempotency_keys`: sačuvan odgovor, npr. poslana poruka) | 24 h | API (`cleanup`) |
+| Promjene režima rada (`rezim_promjene`: id administratora, vrijeme) | trajno (nalog obrisan → id se briše) | — |
 
 Obrisan nalog ostaje u kopijama baze najviše 4 sedmice (najstarija sedmična kopija i snapshotovi Storage Boxa).
 

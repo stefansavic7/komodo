@@ -58,11 +58,31 @@ BASE_URL=http://127.0.0.1:3910 DATABASE_URL=postgres://postgres@127.0.0.1:55432/
 3. Iz drugog terminala:
 
    ```bash
-   # 10.000 korisnika 120 s, tajmeri klijenta iz docs/SKALIRANJE.md
-   BASE_URL=http://127.0.0.1:3910 LIGHT=1 node test/opterecenje/opterecenje.mjs mix 10000 120
+   # 10.000 korisnika 180 s, klijent v1 (feed „Za tebe”), p95 i po prozorima od 15 s
+   BASE_URL=http://127.0.0.1:3910 LIGHT=1 FEED=1 PROZORI=1 node test/opterecenje/opterecenje.mjs mix 10000 180
    # jedna ruta: 200 istovremenih zahtjeva 20 s
    BASE_URL=http://127.0.0.1:3910 node test/opterecenje/opterecenje.mjs endpoint feed_user 200 20
    ```
+
+   **`mix` mora trajati ≥ 180 s** (generator upozori ako je kraće): sljedeća strana feeda dolazi poslije 20 videa
+   (~160 s), pa kraće mjerenje vidi samo prve strane. `LIGHT=1` rasipa kao pravi klijent (`web/js/osnova.js`,
+   `tajmer`; nalaz iz `docs/RECENZIJA-3.md`, „Mjerenja”): korisnik otvara aplikaciju u nasumičnom trenutku
+   0–`START_S` s (zadano 30; tada prva strana feeda i `/api/me`), prvi poziv svakog tajmera je u nasumičnom trenutku
+   20–100 % intervala, a svaki sljedeći interval ±20 %. Ranije su svi tajmeri 10.000 korisnika okidali u istih 15 s,
+   pa je p95 mjerio talase generatora, ne API. `PROZORI=1` ispisuje i p95/broj zahtjeva po prozorima od 15 s
+   (feed posebno). Prvi prolaz na svježe napunjenoj bazi je „hladan” (vidi mjerenje ispod) — za poređenje verzija
+   uzimati drugi prolaz.
+
+   Izmjereno 24.11.2026. (2 jezgra, generator + API `WORKERS=2`, `NODE_ENV=production` + Postgres zajedno, uz
+   tuđe procese na mašini; svježa baza iz `napuni-bazu.mjs`; `mix 10000 180`, `LIGHT=1 FEED=1`, novi generator):
+
+   | Prolaz | feed | likes | me | like | view | ukupno | greške | load 1 min prije → poslije |
+   |---|---|---|---|---|---|---|---|---|
+   | 1 (hladan, odmah poslije punjenja baze) | 1.789 | 3.119 | 3.204 | 2.602 | 4.619 ms | 995/s | 0 | 2,12 → 4,82 (najviše 8,00) |
+   | 2 (API i baza zagrijani) | 12 | 8 | 8 | 10 | 15 ms | 1.010/s | 0 | 2,61 → 2,91 |
+
+   (p95.) U prvom prolazu sporo je samo prvih 60 s (p95 ostalih ruta po prozorima: 95, 2.548, 5.462, 3.419 ms, pa
+   od 60. s 8–266 ms); u drugom svi prozori ≤ 23 ms.
 
    Rute za `endpoint`: `feed_anon`, `feed_user`, `feed_page`, `feed_category`, `search`, `likes_poll`, `me`,
    `like`, `like_viral`, `view`, `conversations`, `shop`, `feed_zatebe_anon`, `feed_zatebe`, `feed_zatebe_cat`,
@@ -81,7 +101,7 @@ BASE_URL=http://127.0.0.1:3910 DATABASE_URL=postgres://postgres@127.0.0.1:55432/
    `UMIN`/`UMAX` (kupci, zadano 101–10100), `BUTIKA` (zadano 100) — zadane vrijednosti odgovaraju
    `napuni-bazu.mjs` bez dodatnih opcija.
 
-   Isto preko npm-a: `npm run test:opterecenje -- mix 1000 60` (uz `BASE_URL` u okruženju).
+   Isto preko npm-a: `npm run test:opterecenje -- mix 1000 180` (uz `BASE_URL` u okruženju).
 
 Generator i API na istoj mašini dijele procesor, pa su lokalni brojevi samo orijentacija.
 
