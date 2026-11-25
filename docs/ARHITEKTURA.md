@@ -148,3 +148,10 @@ Skripte dijele globalni opseg, pa ove funkcije i vrijednosti drugi fajlovi smiju
 Server pri startu računa sha1 svih `web/js/*.js` i svih `web/*.css` (po abecedi, s imenom fajla) i dodaje
 `?v=<10 znakova>` na svaki lokalni `<script src="/...">` i lokalni stylesheet u `index.html`
 (`rute/staticki.js`). Ista oznaka je `verzija` u `/api/health`. Novi fajl u `web/js/` ulazi u oznaku sam.
+
+
+## Rezolucija videa
+
+`api/src/video.js` (`pustiRezoluciju`): aplikacija pušta najviše `VIDEO_MAX_P` (zadano 720p), iako Bunny kodira i 1080p.
+Razlog: isporuka videa je najveći promjenljivi trošak, a na ekranu telefona razlika 720p/1080p se teško vidi.
+Postojeći oglasi s `video_res = 1080p` automatski se puštaju u 720p, bez migracije. Test: `api/test/video-rezolucija.test.mjs`.

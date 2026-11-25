@@ -68,11 +68,21 @@ export async function deleteFromBunny(guid) {
   await call('DELETE', guid);
 }
 
+// Najveća rezolucija koja se pušta (VIDEO_MAX_P, zadano 720). Bunny i dalje kodira sve rezolucije biblioteke,
+// ali feed na telefonu pušta najviše 720p: manje podataka po gledanju, a razlika na ekranu telefona se teško vidi.
+// Snimak koji ima 1080p ima i 720p (biblioteka 240/360/720/1080), pa se adresa samo spusti na 720p.
+const MAX_P = [1080, 720, 360, 240].includes(parseInt(process.env.VIDEO_MAX_P, 10))
+  ? parseInt(process.env.VIDEO_MAX_P, 10) : 720;
+export function pustiRezoluciju(videoRes) {
+  const r = parseInt(videoRes, 10) || 360;
+  return `${Math.min(r, MAX_P)}p`;
+}
+
 // Adrese za pregled: Bunny MP4 i sličica kad je snimak obrađen, inače fajl s našeg servera.
 export function mediaUrls(r) {
   if (r.video_provider === 'bunny' && r.video_status === 'ready' && r.bunny_guid && CDN) {
     return {
-      videoUrl: `https://${CDN}/${r.bunny_guid}/play_${r.video_res || '360p'}.mp4`,
+      videoUrl: `https://${CDN}/${r.bunny_guid}/play_${pustiRezoluciju(r.video_res)}.mp4`,
       posterUrl: `https://${CDN}/${r.bunny_guid}/thumbnail.jpg`,
     };
   }
