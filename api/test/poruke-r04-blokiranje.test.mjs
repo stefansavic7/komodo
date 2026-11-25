@@ -87,7 +87,7 @@ describe('obrisan oglas, sizes, naslov u spisku, blokiranje (razvoj)', () => {
     razgovor = (await kupac.post('/api/conversations', { shop: butik.handle, listingId: oglas.id })).body.razgovor;
     await kupac.post(`/api/conversations/${razgovor}/messages`, { body: 'Imate li S?' });
     const m = await kupac.get(`/api/conversations/${razgovor}/messages`);
-    assert.deepEqual(m.body.oglas, { id: oglas.id, title: 'Haljina s veličinama', price: 65, sizes: ['S', 'M'] });
+    assert.deepEqual(m.body.oglas, { id: oglas.id, title: 'Haljina s veličinama', price: 65, sizes: ['S', 'M'], posterUrl: '', oldPrice: null });
     assert.equal((await kupac.get('/api/conversations')).body.razgovori[0].listingTitle, 'Haljina s veličinama');
     assert.equal((await shop.get('/api/conversations')).body.razgovori[0].listingTitle, 'Haljina s veličinama');
   });

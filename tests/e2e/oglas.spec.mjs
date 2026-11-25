@@ -181,7 +181,7 @@ test('F-03: forma objave — veličine po kategoriji, obavezan izbor, kartica i 
   const sveVel = await page.locator('.card[data-id] .vel').allTextContents();
   expect(sveVel.length).toBeGreaterThan(0);
   expect(sveVel.every((t) => t.indexOf('XXL') !== -1)).toBe(true);
-  expect(await page.evaluate(() => localStorage.getItem('komodo.velicine'))).toBe('["XXL"]');
+  expect(await page.evaluate(() => localStorage.getItem('komodo.velicine'))).toBe('{"odjeca":["XXL"],"obuca":[]}');   // veličine se pamte po grupi (DIZAJN.md 2.3)
   // Preživi ponovno otvaranje.
   await page.reload();
   await expect(page.locator('#chips .vtab')).toHaveText('Veličine: XXL ✕');
@@ -197,9 +197,10 @@ test('F-03: forma objave — veličine po kategoriji, obavezan izbor, kartica i 
   await page.locator('#qSizesObuca [data-size="46"]').click();
   await expect(page.locator('.card.empty h2')).toHaveText('Nema oglasa u tvojoj veličini');
   await expect(page.locator('.card.empty p')).toHaveText('Probaj bez filtera veličine.');
+  await page.locator('#searchForm button[type="submit"]').click();   // prozor filtera je preko feeda: „Traži” ga zatvara
   await page.locator('.card.empty [data-act="clearsizes"]').click();
   await expect(page.locator('#chips .vtab')).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem('komodo.velicine'))).toBe('[]');
+  expect(await page.evaluate(() => localStorage.getItem('komodo.velicine'))).toBe('{"odjeca":[],"obuca":[]}');
 });
 
 test('F-07: sniženje u izmjeni — napomena, toast, precrtana stara cijena na kartici', async ({ page, context }) => {

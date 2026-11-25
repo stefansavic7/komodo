@@ -14,6 +14,13 @@ function setAuthMode(mode) {
   $('#authLead').textContent = reg
     ? ((posle && posle.lead) || 'Nalog je besplatan. S njim čuvaš šta ti se sviđa i pišeš buticima.')
     : 'Prijavi se da označiš šta ti se sviđa i pišeš buticima.';
+  // Mini oglas za U-04: podaci iz `items` u memoriji, bez zahtjeva.
+  var it = posle && (posle.id || posle.listingId) ? byId(posle.id || posle.listingId) : null;
+  $('#authItem').hidden = !it;
+  if (it) {
+    $('#authItem').innerHTML = '<span class="tile-m">' + (it.posterUrl ? '<img class="tile-img" width="96" height="128" src="' + esc(it.posterUrl) + '" alt="" loading="lazy">' : icon('video')) + '</span>' +
+      '<span><strong>' + esc(it.title) + '</strong><span class="pp"><em>' + fmtKM(it.price) + '</em>' + esc(it.shopName) + '</span></span>';
+  }
   $('#authShopField').hidden = !reg;
   $('#authSubmit').textContent = reg ? 'Napravi nalog' : 'Prijavi se';
   $('#authSwitch').textContent = reg ? 'Već imaš nalog? Prijavi se' : 'Nemaš nalog? Napravi ga';
@@ -109,6 +116,7 @@ $('#verifyResend').addEventListener('click', function () {
 
 $('#passToggle').addEventListener('click', function () {
   $('#passFields').hidden = !$('#passFields').hidden;
+  $('#passToggle').setAttribute('aria-expanded', $('#passFields').hidden ? 'false' : 'true');
   $('#passErr').textContent = '';
 });
 $('#passForm').addEventListener('submit', function (e) {

@@ -853,6 +853,30 @@ kategorije (nalaz 17), sistemska poruka s karticom oglasa u razgovoru.
 1. **Oznaka „Provjeren butik”** (19.11.2026.): ostaje. Stefan lično sa svakim butikom otvara nalog, pa je oznaka
    istinita za sve butike i ne treba poseban prekidač u administraciji.
 
+### Odluke redizajna (24.11.2026.)
+
+Stefan je potvrdio pravac A „Noćni izlog” (`docs/DIZAJN.md`) i sve odluke iz njegovog odjeljka 5. Ovi tekstovi i
+odluke zamjenjuju ranije u ovom dokumentu gdje se razlikuju:
+
+1. ~~„Pitaj butik” umjesto „Kontaktiraj butik”~~ **Izmjena 25.11.2026. (konačno): dugme na kartici oglasa je samo „Kontaktiraj”; naziv prozora kontakta ostaje „Kontaktiraj butik”** (jasnije uz ime butika u kartici povjerenja; glavna radnja
+   u prozoru ostaje „Pošalji poruku”).
+2. **Kraj objave:** poslije uspješne objave prozor „Oglas je u izlogu” s dugmadima „Podijeli oglas” i „Objavi još
+   jedan” (umjesto toasta „Oglas je objavljen.”).
+3. **Kartica oglasa u feedu:** pored imena butika „Provjeren butik” i „otvoreno do 20:00”; zatvoren butik piše
+   „otvara u 09:00”, „otvara sutra u 09:00” ili „otvara u ponedjeljak u 09:00” (bez riječi „Zatvoreno”).
+4. **Profil butika:** „Mapa” umjesto „Otvori na mapi”. Glavno dugme je „Pošalji poruku”, a „Prati” je sporedno dugme.
+5. **„Više” za kupca** na oglasu: „Profil butika {Butik}”, „Kopiraj link oglasa”, „Prijavi oglas” (prijava se
+   više ne nalazi u koloni radnji na kartici).
+6. **Prva poruka:** kartica proizvoda na vrhu razgovora i status radnog vremena: „Butik je otvoren do 20:00.
+   Odgovor stiže ovdje.” / „Butik je zatvoren · otvara sutra u 09:00. Odgovor stiže ovdje.”
+7. **Prazan spisak poruka (kupac):** „Na oglasu dodirni „Kontaktiraj” i pitaj šta te zanima.”
+8. **Filter:** pretraga i filter su u prozoru „Traži”; „Traži” zatvara prozor. Veličine se pamte i šalju po grupi
+   (odjeća, obuća), pa filter obuće ne utiče na haljine i obrnuto. Zvuk je prekidač cijelog feeda u gornjoj traci.
+
+9. **Glavna boja: koral + „Sjaj”** (25.11.2026.): koral ostaje glavna boja, a glavna radnja dobija blagi gradijent „Sjaj”
+   (`docs/DIZAJN.md`, odjeljak 6) — samo „Kontaktiraj” (dugme na kartici), „Objavi”, „Pošalji poruku” (profil butika i prozor kontakta), „Objavi još jedan”
+   i zeleni sjaj iza kvačice na „Oglas je u izlogu”. Druga glavna boja iz odjeljka 7 dizajna se ne uvodi.
+
 ## 8. Napomena direktora: sličice za pregled linka
 
 Na Bunnyju je uključeno „Block direct url file access” i Stefan je odlučio da se ne isključuje. Zato `og:image` ne

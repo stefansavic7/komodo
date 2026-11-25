@@ -26,11 +26,14 @@ Počinje s buticima u Banjoj Luci. Vlasnik je Stefan; odvojen proizvod od Termin
   sniženja s pushom, poruke (brza pitanja), brojke administratora.
 - Migracije su do 014 (`013_otpornost.sql`: `listing_likes_delta`, `outbox`, `idempotency_keys`, `app_settings`; `014_recenzija3.sql`: `idempotency_keys.vlasnik`, `outbox.zakup`, `rezim_promjene`); **sljedeća je 015**. Plan do produkcije je u `docs/PLAN-PRODUKCIJA.md`, stanje i redoslijed
   preostalog posla u `docs/NASTAVAK.md` (ako postoji), nalazi recenzija u `docs/RECENZIJA-1.md`, `docs/RECENZIJA-2.md` i `docs/RECENZIJA-3.md` (stanje popravki na kraju).
-- Testovi: 256 API testova, test istovremenosti, Playwright e2e (36), `mobile/navigacija.test.mjs` (`docs/TESTOVI.md`).
+- Testovi: 263 API testa, test istovremenosti, Playwright e2e (36), `mobile/navigacija.test.mjs` (`docs/TESTOVI.md`).
 - Talas 4 „otpornost” (24.11.): rokovi za upite i HTTP (503 + `Retry-After`, nikad 500), klijent s rasipanjem i
   sve dužim čekanjem, „veliki crveni prekidač” (`/api/config`, `KOMODO_REZIM`, Administracija → Režim rada;
   `docs/RUNBOOK.md` 4a), stari keš feeda kad baza ne odgovara, sviđanja kroz `listing_likes_delta`, push kroz
   `outbox`, `Idempotency-Key` za poruku i objavu (`docs/ARHITEKTURA.md`, „Otpornost”).
+- Redizajn A „Noćni izlog” (koral + Sjaj) spojen u `master` 25.11.2026. (grana `redizajn`): sistem i ekrani u
+  `docs/DIZAJN.md`, pregled `docs/DIZAJN-PREGLED.md`, slike `design/poslije/`. API je dobio samo polja (`shopAddress`/`shopHours` na
+  oglasima, uz `after=0` u razgovoru `oglas.posterUrl`/`oldPrice` i `sagovornik.hours`), bez migracija.
 - Struktura koda: `docs/ARHITEKTURA.md`; server i Nginx: `docs/SERVER.md`, `server/nginx-komodo.conf`; kako vratiti verziju
   i bazu: `docs/RUNBOOK.md`.
 

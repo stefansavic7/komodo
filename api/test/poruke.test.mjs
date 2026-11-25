@@ -42,7 +42,9 @@ describe('razgovor', () => {
     // Oglas drugog butika se ne veže za ovaj razgovor.
     await kupac.post('/api/conversations', { shop: butik.handle, listingId: oglasDrugog.id });
     const m = await kupac.get(`/api/conversations/${razgovor}/messages`);
-    assert.deepEqual(m.body.oglas, { id: oglas.id, title: 'Haljina za poruke', price: 45, sizes: [] });
+    // Prvo otvaranje (after=0) nosi i posterUrl, oldPrice i radno vrijeme sagovornika (kartica proizvoda i status, redizajn korak 9).
+    assert.deepEqual(m.body.oglas, { id: oglas.id, title: 'Haljina za poruke', price: 45, sizes: [], posterUrl: '', oldPrice: null });
+    assert.ok('hours' in m.body.sagovornik);
     assert.equal(m.body.sagovornik.handle, butik.handle);
     assert.equal(m.body.sagovornik.butik, true);
   });
@@ -78,6 +80,30 @@ describe('razgovor', () => {
     assert.equal(m.body.sagovornik.butik, false);
     assert.equal((await shop.get('/api/me')).body.neprocitano, 0);
     assert.equal((await shop.get('/api/conversations')).body.razgovori[0].unread, false);
+  });
+
+  test('radno vrijeme sagovornika samo kad je butik i samo uz after=0; dovlačenje ostaje malo', async () => {
+    const hours = { rd: ['09:00', '20:00'], sub: ['09:00', '15:00'], ned: null };
+    assert.equal((await shop.patch('/api/me', { hours })).status, 200);
+    const prvo = await kupac.get(`/api/conversations/${razgovor}/messages`);
+    assert.deepEqual(prvo.body.sagovornik.hours, hours);
+    // Butik gleda kupca: kupac nema radno vrijeme, polje je null.
+    const kodButika = await shop.get(`/api/conversations/${razgovor}/messages`);
+    assert.equal(kodButika.body.sagovornik.hours, null);
+    // Dovlačenje (after>0) nema nova polja.
+    const dalje = await kupac.get(`/api/conversations/${razgovor}/messages?after=1`);
+    assert.equal('hours' in dalje.body.sagovornik, false);
+    assert.equal('posterUrl' in (dalje.body.oglas || {}), false);
+    assert.equal('oldPrice' in (dalje.body.oglas || {}), false);
+  });
+
+  test('sniženi oglas: prvo otvaranje nosi staru cijenu (oldPrice), dovlačenje ne', async () => {
+    const r = await shop.patch(`/api/listings/${oglas.id}`, { title: 'Haljina za poruke', price: '39', category: 'Haljine' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const prvo = await kupac.get(`/api/conversations/${razgovor}/messages`);
+    assert.equal(prvo.body.oglas.price, 39);
+    assert.equal(prvo.body.oglas.oldPrice, 45);
+    assert.equal('oldPrice' in (await kupac.get(`/api/conversations/${razgovor}/messages?after=1`)).body.oglas, false);
   });
 
   test('odgovor butika; after= vraća samo novije poruke', async () => {

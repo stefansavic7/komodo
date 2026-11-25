@@ -17,7 +17,8 @@ test('kupac prijavljuje oglas u aplikaciji, admin vidi i rješava prijavu', asyn
   await kupac.goto(`/?o=${oglas.id}`);
   const card = kupac.locator(`.card[data-id="${oglas.id}"]`);
   await expect(card).toBeVisible();
-  await card.locator('[data-act="report"]').click();
+  await card.locator('[data-act="more"]').click();
+  await kupac.locator('#buyerMoreSheet [data-act="report"]').click();
   await expect(kupac.locator('#reportSheet')).toBeVisible();
   await kupac.locator('#reportReason').selectOption('Prevara ili lažan oglas');
   await kupac.locator('#reportForm button[type="submit"]').click();

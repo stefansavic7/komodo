@@ -191,7 +191,8 @@ describe('outbox: R3-02 (loš token ne obara seriju), R3-08, R3-07', () => {
     const dobili = new Set(expo.primljeno.map((p) => p.to));
     assert.equal(dobili.size, 29);
     assert.ok(!dobili.has('ExponentPushToken[tudji17]'));
-    assert.equal(await ima('ExponentPushToken[tudji17]'), false);
+    // Token se briše na kraju prolaza, poslije oznake „poslano” (outbox.js) — sačekati ga, ne čitati odmah.
+    await cekajDa(async () => !(await ima('ExponentPushToken[tudji17]')), 3000, 'loš token obrisan');
     assert.equal(await ima('ExponentPushToken[nas1]'), true);
     // Podjela po projektima iz details: prvi zahtjev (30), pa dvije grupe (29 i 1) — ne 30 pojedinačnih.
     assert.ok(expo.zahtjevi.length <= 4, `zahtjeva: ${expo.zahtjevi.length}`);
@@ -212,8 +213,7 @@ describe('outbox: R3-02 (loš token ne obara seriju), R3-08, R3-07', () => {
     await baza.q("insert into outbox(vrsta, payload) values ('push', $1::jsonb)", [JSON.stringify({ poruke })]);
     await cekajDa(async () => (await naCekanju()) === 0, 8000, 'red obrađen');
     assert.equal(expo.primljeno.length - prije, poruke.length - 2);
-    assert.equal(await ima('ExponentPushToken[los40]'), false);
-    assert.equal(await ima('ExponentPushToken[los99]'), false);
+    await cekajDa(async () => !(await ima('ExponentPushToken[los40]')) && !(await ima('ExponentPushToken[los99]')), 3000, 'loši tokeni obrisani');
     expo.st.bezDetalja = false;
   });
 

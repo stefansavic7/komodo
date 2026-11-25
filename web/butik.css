@@ -1,74 +1,114 @@
-/* Komodo web — P3 Butik: javni profil butika, vlastiti profil, praćenje, radno vrijeme, prozor „Uredi profil”.
-   Dopunjuje style.css (iste promjenljive); učitava se poslije njega. SPEC-V1: F-04, F-05, U-01, U-02, U-07, U-17. */
+/* Komodo web — profili (korak 7, docs/DIZAJN.md 2.11–2.13): javni profil butika, vlastiti profil, profil kupca,
+   „Uredi profil”, mreža pločica, Nalog. Dopunjuje style.css (iste promjenljive); učitava se poslije njega. */
 
-/* oznaka „Provjeren butik” */
-.p-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.p-title h2{margin:0}
-.v-badge{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--tag);color:var(--tag);font:700 12px/1 var(--body);letter-spacing:.02em}
+.profile{grid-row:1;overflow-y:auto;padding:calc(var(--sat) + var(--s-5)) var(--s-4) var(--s-5);display:grid;gap:var(--s-5);align-content:start}
+.profile h2{margin:0;font:var(--fw-b) var(--fs-4)/var(--lh-4) var(--f-display);letter-spacing:-.01em;text-wrap:balance}
+#shopView{padding-top:calc(var(--sat) + var(--s-2))}
+#me{display:grid;gap:var(--s-5);align-content:start}
+#me[hidden]{display:none}
+.topnav{display:flex;align-items:center;justify-content:space-between;min-height:48px;margin:0 calc(-1 * var(--s-2))}
+.topnav .back{padding:0 var(--s-2)}
+.v-body{display:grid;gap:var(--s-4);align-content:start}
 
-/* brojke */
-.stats{flex-wrap:wrap;gap:8px 28px}
-.stats div[hidden]{display:none}
+/* zaglavlje i brojke */
+.p-head{display:flex;gap:var(--s-4);align-items:center}
+.p-avatar{flex:0 0 64px;width:64px;height:64px;border-radius:50%;background:var(--c-accent);color:var(--c-on-accent);display:grid;place-items:center;font:var(--fw-b) var(--fs-4)/1 var(--f-display)}
+.p-name{display:grid;gap:var(--s-1);min-width:0;flex:1;justify-items:start}
+.p-name h2{overflow-wrap:anywhere}
+.p-name .hint{overflow-wrap:anywhere}
+.v-badge{border:0;background:none;text-align:left}
+.stats{display:flex;flex-wrap:wrap;gap:var(--s-1) var(--s-5);margin:0;font:var(--fw-r) var(--fs-2)/var(--lh-2) var(--f-body);color:var(--c-text-3)}
+.stats>div{display:flex;gap:var(--s-1);align-items:baseline}
+.stats>div[hidden]{display:none}
+.stats dt{order:2}
+.stats dd{margin:0;color:var(--c-text);font:var(--fw-b) var(--fs-3)/var(--lh-3) var(--f-body);font-variant-numeric:tabular-nums}
 
-/* adresa, mapa, radno vrijeme */
-.v-place{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.v-addr{min-width:0;overflow-wrap:anywhere;font:600 15px/1.3 var(--body)}
-.v-map{flex:0 0 auto;display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line);color:var(--tag);font:700 14px/1 var(--body);text-decoration:none}
-.v-hours{display:grid;gap:6px;margin-top:-10px}
-.v-status{justify-self:start;min-height:44px;display:inline-flex;align-items:center;padding:0;color:var(--muted);font:700 15px/1.2 var(--body);text-align:left}
-.v-status.is-open{color:#6fd98c}
-.v-status::after{content:"";margin-left:8px;width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg) translateY(-2px)}
-.v-status[aria-expanded="true"]::after{transform:rotate(-135deg) translateY(-2px)}
-.v-full{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
+/* kartica povjerenja: adresa i radno vrijeme */
+.trust>:not([hidden])~:not([hidden]){border-top:1px solid var(--c-line)}
+.trust-row.v-status{width:100%;text-align:left;color:var(--c-text)}
+.trust-row.v-status .grow{font-weight:var(--fw-b)}
+.trust-row.v-status.is-open .grow{color:var(--c-ok)}
+.v-status[aria-expanded="true"] .chev{transform:rotate(180deg)}
+.v-full{margin:0;padding:0 0 var(--s-3) 32px;color:var(--c-text-2);font:var(--fw-r) var(--fs-2)/var(--lh-2) var(--f-body)}
+.trust-row .btn-sm{padding:0 var(--s-3)}
 
-/* dugmad na profilu butika */
-.v-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.v-actions .v-follow{grid-column:1 / -1;min-height:48px;text-align:center}
-.v-actions .btn{min-height:48px}
-.v-follow.is-on{background:transparent;color:var(--text);border:1px solid var(--text)}
-.v-follow.is-on:hover{border-color:var(--accent)}
+/* dugmad */
+.p-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s-2)}
+.p-actions3{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) var(--btn-h);gap:var(--s-2)}
+.p-actions3.kupac{grid-template-columns:minmax(0,1fr)}
+.p-actions .btn,.p-actions3 .btn{padding:0 var(--s-3);min-width:0}
+.p-actions .btn:only-child{grid-column:1 / -1}
+.v-follow.is-on{border-color:var(--c-text)}
+.icon-sq{width:var(--btn-h);height:var(--btn-h);border-radius:50%;border:1px solid var(--c-border);display:grid;place-items:center;color:var(--c-text)}
+.icon-sq:active{transform:scale(.92)}
+.quick-links{display:flex;gap:var(--s-2);overflow-x:auto;scrollbar-width:none;margin:0 calc(-1 * var(--s-4));padding:var(--s-1) var(--s-4)}
+.quick-links::-webkit-scrollbar{display:none}
+.ql-wrap{display:contents}
+.quick-links .quick{text-decoration:none;color:var(--c-text)}
+.v-missing{display:grid;gap:var(--s-4);justify-items:center;text-align:center;padding-top:var(--s-6)}
+.v-missing .btn{max-width:320px}
 
-/* nepostojeći butik (U-02) */
-.v-missing{display:grid;gap:14px;justify-items:start;padding-top:12px}
-.v-missing h2{margin:0}
-
-/* vlastiti profil */
-.p-actions{display:flex;flex-wrap:wrap;gap:10px}
-.p-actions .btn{flex:1 1 auto;min-height:44px;padding:12px 16px}
-.p-gridhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.p-gridhead h2{margin:0}
-.p-gridhead .link{min-height:44px;display:inline-flex;align-items:center}
-.p-grid-wrap{gap:10px}
-#me{gap:20px}
-.nalog{display:grid;gap:14px;padding-top:8px;border-top:1px solid var(--line)}
-.nalog h2{margin:12px 0 0}
-.nalog .link{min-height:44px;display:inline-flex;align-items:center}
+/* naslov odjeljka i mreža pločica */
+.p-grid-wrap{display:grid;gap:var(--s-2)}
+.sec-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s-3);min-height:var(--tap)}
+.sec-head h2{font:var(--fw-b) var(--fs-3)/var(--lh-3) var(--f-body);letter-spacing:0}
+.grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-4) var(--s-2)}
+.tile{position:relative;display:grid;gap:var(--s-1);min-width:0;align-content:start}
+.tile-m{position:relative;aspect-ratio:3/4;border-radius:var(--r-3);overflow:hidden;background:var(--c-surface-2)}
+.tile-m video,.tile-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.tile-open{position:absolute;inset:0;width:100%;height:100%;border-radius:var(--r-3)}
+.tile-open:focus-visible{outline-offset:-4px}
+.tile-price{position:absolute;left:var(--s-1);bottom:var(--s-1);padding:var(--s-1) var(--s-2);border-radius:var(--r-1) var(--r-2) var(--r-2) var(--r-1);background:var(--c-price);color:var(--c-on-price);font:var(--fw-b) var(--fs-1)/var(--lh-1) var(--f-display);font-variant-numeric:tabular-nums;pointer-events:none}
+.tile-flag{position:absolute;left:var(--s-1);top:var(--s-1);padding:var(--s-1) var(--s-2);border-radius:var(--r-1);background:var(--c-veil);color:var(--c-text);font:var(--fw-b) var(--fs-1)/var(--lh-1) var(--f-body);pointer-events:none}
+.tile-flag.sold{background:var(--c-text);color:var(--c-bg)}
+.tile.is-sold .tile-m>video,.tile.is-sold .tile-m>.tile-img{opacity:.5}
+.tile-name{min-width:0;font:var(--fw-r) var(--fs-1)/var(--lh-1) var(--f-body);color:var(--c-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile-name .drop{display:block;font-size:var(--fs-1)}
+.p-empty{display:grid;gap:var(--s-4);justify-items:start}
+.p-empty p{margin:0;color:var(--c-text-2)}
+.btn.more{justify-self:center}
 
 /* spisak „Pratim” */
-.f-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-.f-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--line)}
-.f-open{flex:1;min-width:0;display:grid;gap:3px;text-align:left;color:var(--text);min-height:44px;align-content:center}
-.f-open strong{font:700 15px/1.2 var(--body);overflow-wrap:anywhere}
-.f-open span{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
-.f-btn{flex:0 0 auto;min-height:44px;padding:0 16px}
-.f-btn.is-on{background:transparent;border-color:var(--text);color:var(--text)}
-.f-btn:not(.is-on){background:var(--accent);border-color:var(--accent);color:var(--ink)}
+.f-list{list-style:none;margin:0;padding:0 var(--s-4);display:grid;border-radius:var(--r-4);background:var(--c-surface)}
+.f-item{display:flex;align-items:center;gap:var(--s-3)}
+.f-item+.f-item{border-top:1px solid var(--c-line)}
+.f-open{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s-3);min-height:64px;text-align:left;color:var(--c-text)}
+.f-txt{display:grid;min-width:0}
+.f-txt strong{font:var(--fw-b) var(--fs-3)/var(--lh-3) var(--f-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f-txt span{font:var(--fw-r) var(--fs-2)/var(--lh-2) var(--f-body);color:var(--c-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f-btn{flex:0 0 auto}
 
-/* „Kontaktiraj butik”: status radnog vremena */
-.c-status{padding:12px 14px;border-radius:12px;background:var(--ink);border:1px solid var(--line);color:var(--muted);font:700 15px/1.2 var(--body)}
-.c-status.is-open{color:#6fd98c}
+/* Nalog */
+.nalog{display:grid;gap:var(--s-2)}
+.nalog h2{font:var(--fw-b) var(--fs-3)/var(--lh-3) var(--f-body);letter-spacing:0;color:var(--c-text-3)}
+.list-card{display:grid;border-radius:var(--r-4);background:var(--c-surface);padding:0 var(--s-4)}
+.list-card>:not([hidden])~:not([hidden]){border-top:1px solid var(--c-line)}
+.list-card .menu-item{padding:0;min-height:52px;text-align:left}
+.list-card .shop-form{gap:0}
+.list-card .sub-form{gap:var(--s-4);padding-bottom:var(--s-4)}
+.note{display:grid;gap:var(--s-2);justify-items:start;padding:var(--s-4);border-radius:var(--r-4);background:var(--c-surface);border-left:4px solid var(--c-ok)}
+.note p{margin:0}
+.p-row{display:flex;gap:var(--s-2);flex-wrap:wrap}
+.shop-only{display:grid;gap:var(--s-4)}
+
+/* prekidač (potvrdno polje izgleda kao .switch) */
+.sw{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 52px;width:52px;height:32px;margin:0 0 0 auto;border-radius:var(--r-pill);background:var(--c-field);border:1px solid var(--c-border);cursor:pointer}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:var(--c-text-3);transition:transform var(--t-base) var(--ease-out)}
+.sw:checked{background:var(--c-ok);border-color:var(--c-ok)}
+.sw:checked::after{transform:translateX(20px);background:var(--c-bg)}
+.check{display:flex;align-items:center;gap:var(--s-3);min-height:var(--tap);font:var(--fw-b) var(--fs-3)/var(--lh-3) var(--f-body)}
+.check input[type=checkbox]:not(.sw){width:24px;height:24px;accent-color:var(--c-ok)}
 
 /* prozor „Uredi profil” */
 #profSheet{z-index:30}
-.hours{border:0;margin:0;padding:0;display:grid;gap:12px;min-width:0}
-.hours legend{padding:0;margin-bottom:2px}
-.h-row{display:grid;gap:8px;padding:10px 12px;border-radius:12px;background:var(--ink);border:1px solid var(--line)}
-.h-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
-.h-head .check{min-height:44px}
-.h-times{display:flex;align-items:center;gap:10px}
-.h-times input{flex:1;min-width:0;min-height:44px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-size:16px}
-.h-times span{color:var(--muted)}
-#profSheet .field input{min-height:44px}
-#profSheet .btns .btn{min-height:48px}
-.v-body{display:grid;gap:20px;align-content:start}
-.v-body[hidden]{display:none}
+.hours{border:0;margin:0;padding:0;display:grid;gap:var(--s-3);min-width:0}
+.hours legend{padding:0;margin-bottom:var(--s-2)}
+.h-row{display:grid;gap:var(--s-2);padding:var(--s-2) var(--s-4) var(--s-4);border-radius:var(--r-3);background:var(--c-surface-2)}
+.h-row:has(.h-times[hidden]){padding-bottom:var(--s-2)}
+.h-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s-3);min-height:var(--tap)}
+.h-head .check{margin-left:auto}
+.h-times{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s-2)}
+.links{display:grid;gap:var(--s-2)}
+.link-row{display:flex;gap:var(--s-2);align-items:center}
+.link-row input{flex:1;min-width:0}
+.h-row .h-times input,.h-times input{width:100%;height:var(--btn-h);padding:0 var(--s-4);border-radius:var(--r-3);border:1px solid var(--c-border);background-color:var(--c-field);color:var(--c-text);font:var(--fw-r) var(--fs-3)/1 var(--f-body)}

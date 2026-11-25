@@ -23,6 +23,7 @@ const APP_URL = (process.env.EXPO_PUBLIC_APP_URL || 'https://komodo.ba').replace
 const PACKAGE = 'ba.komodo.app';
 const INK = '#16121a';
 const CORAL = '#ff6a4d';
+const CORAL_PRESS = '#f0583b';   // pritisnuto (docs/DIZAJN.md 6.1, ravno); gradijent „Sjaj” bi tražio novu zavisnost
 const LOGO = require('./assets/splash.png');
 
 // Najduže koliko čekamo prvu stranicu pod splashom; poslije toga se vidi indikator učitavanja.
@@ -452,11 +453,16 @@ const styles = StyleSheet.create({
   blank: { flex: 1, backgroundColor: INK },
   center: { alignItems: 'center', justifyContent: 'center', backgroundColor: INK, gap: 24 },
   logo: { width: 200, height: 200 },
-  logoSmall: { width: 96, height: 96, marginBottom: 8 },
-  error: { justifyContent: 'center', paddingHorizontal: 28, gap: 12, backgroundColor: INK },
-  errorTitle: { color: '#f7f1ea', fontSize: 26, fontWeight: '700' },
-  errorText: { color: '#b9adbd', fontSize: 16, lineHeight: 22 },
-  button: { alignSelf: 'flex-start', backgroundColor: CORAL, paddingVertical: 14, paddingHorizontal: 22, borderRadius: 999, marginTop: 8 },
-  pressed: { opacity: 0.8 },
-  buttonText: { color: INK, fontSize: 16, fontWeight: '700' },
+  logoSmall: { width: 96, height: 96 },
+  // Bez interneta / nedostupno (docs/DIZAJN.md 2.19, pravac A): naslov 24/28, tekst 16/24, razmaci 16, glavno dugme
+  // visine 48 u koralu (ravno; bez react-native-svg nema kruga s ikonom ni gradijenta).
+  error: { justifyContent: 'center', paddingHorizontal: 28, gap: 16, backgroundColor: INK },
+  errorTitle: { color: '#f7f1ea', fontSize: 24, lineHeight: 28, fontWeight: '700' },
+  errorText: { color: '#cfc4d2', fontSize: 16, lineHeight: 24, fontWeight: '400' },
+  button: {
+    alignSelf: 'flex-start', minHeight: 48, justifyContent: 'center', backgroundColor: CORAL,
+    paddingHorizontal: 24, borderRadius: 24,
+  },
+  pressed: { backgroundColor: CORAL_PRESS, transform: [{ scale: 0.98 }] },
+  buttonText: { color: INK, fontSize: 16, lineHeight: 20, fontWeight: '700' },
 });

@@ -57,7 +57,9 @@ test('„Novo” redom od najnovijeg; ponovni dodir osvježava; pretraga sakriva
   await page.locator('#searchToggle').click();
   await page.locator('#qText').fill('Feed');
   await page.locator('#searchForm button[type="submit"]').click();
+  await expect(page.locator('#searchSheet')).toBeHidden();   // „Traži” zatvara prozor (DIZAJN.md 2.3, P-1)
   await expect(page.locator('#ftabs')).toBeHidden();
+  await page.locator('#searchToggle').click();
   await page.locator('#searchClear').click();
   await expect(page.locator('#ftabs')).toBeVisible();
 });

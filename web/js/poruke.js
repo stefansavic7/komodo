@@ -13,17 +13,22 @@ function fmtTime(iso) {
 }
 function renderInbox() {
   $('#inboxHint').textContent = 'Učitavam poruke…';
+  $('#inboxEmpty').hidden = true; $('#inboxEmpty').innerHTML = '';
   $('#inboxList').innerHTML = '';
   api('GET', '/api/conversations').then(function (d) {
     var list = d.razgovori;
-    $('#inboxHint').textContent = list.length ? '' : (isShop()
-      ? 'Još nema poruka. Kad ti kupac piše zbog oglasa, razgovor se pojavi ovdje.'
-      : 'Još nema poruka. Na oglasu dodirni Pošalji poruku i pitaj butik šta te zanima.');
+    $('#inboxHint').textContent = '';
+    // Prazno stanje iz sistema (docs/DIZAJN.md 1.7): krug s ikonom, naslov i tekst.
+    $('#inboxEmpty').innerHTML = list.length ? '' : '<div class="empty-box"><span class="empty-ico">' + icon('chat') + '</span><h2>Još nema poruka</h2><p>' +
+      (isShop() ? 'Kad ti kupac piše zbog oglasa, razgovor se pojavi ovdje.' : 'Na oglasu dodirni „Kontaktiraj” i pitaj šta te zanima.') + '</p></div>';
+    $('#inboxEmpty').hidden = !!list.length;
     $('#inboxList').innerHTML = list.map(function (c) {
       return '<li><button type="button" data-chat="' + c.id + '" class="' + (c.unread ? 'unread' : '') + '">' +
-        '<span class="who"><span>' + esc(c.name) + '</span><time>' + esc(fmtTime(c.at)) + '</time></span>' +
+        '<span class="av40" aria-hidden="true">' + esc(initial(c.name)) + '</span>' +
+        '<span style="min-width:0"><span class="who"><span>' + esc(c.name) + '</span><time>' + esc(fmtTime(c.at)) + '</time></span>' +
         (c.listingTitle ? '<span class="ltitle">' + esc(c.listingTitle) + '</span>' : '') +
-        '<span class="last">' + esc(c.last || '') + '</span></button></li>';
+        '<span class="last">' + esc(c.last || '') + '</span></span>' +
+        (c.unread ? '<span class="udot" role="img" aria-label="Nepročitano"></span>' : '<span></span>') + '</button></li>';
     }).join('');
     refreshUnread();
   }).catch(function (err) { $('#inboxHint').textContent = err.message; });
@@ -38,15 +43,25 @@ function startChat(handle, listingId) {
     openChat(d.razgovor);
   }).catch(function (err) { toast(err.message, true); });
 }
+// Razdjelnik dana u razgovoru: Danas | Juče | 21.11. (bez novih zahtjeva).
+var chatLastDay = '';
+function dayLabel(iso) {
+  var d = new Date(iso), now = new Date(), y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) { return 'Danas'; }
+  if (d.toDateString() === y.toDateString()) { return 'Juče'; }
+  return d.getDate() + '.' + (d.getMonth() + 1) + '.' + (d.getFullYear() !== now.getFullYear() ? d.getFullYear() + '.' : '');
+}
 function msgHTML(m) {
-  return '<div class="msg' + (m.mine ? ' mine' : '') + '">' + esc(m.body) + '<time>' + esc(fmtTime(m.at)) + '</time></div>';
+  var day = new Date(m.at).toDateString(), sep = '';
+  if (day !== chatLastDay) { chatLastDay = day; sep = '<p class="day" role="separator">' + esc(dayLabel(m.at)) + '</p>'; }
+  return sep + '<div class="msg' + (m.mine ? ' mine' : '') + '">' + esc(m.body) + '<time>' + esc(fmtTime(m.at)) + '</time></div>';
 }
 function appendMessages(list) {
   if (!list.length) { return; }
-  var log = $('#chatLog'), empty = log.querySelector('.chat-empty');
-  if (empty) { empty.remove(); }
-  var fresh = list.filter(function (m) { return m.id > chatLast; });
+  var log = $('#chatLog'), fresh = list.filter(function (m) { return m.id > chatLast; });
   if (!fresh.length) { return; }
+  var old = log.querySelectorAll('.chat-empty, .pstatus'), k;
+  for (k = 0; k < old.length; k++) { old[k].remove(); }
   log.insertAdjacentHTML('beforeend', fresh.map(msgHTML).join(''));
   chatLast = fresh[fresh.length - 1].id;
   log.scrollTop = log.scrollHeight;
@@ -62,63 +77,65 @@ function stopChat() {
   if (chatId) { toApp({ type: 'chat', id: null }); }
   chatTimer = staniTajmer(chatTimer); chatId = null;
 }
+// Kartica proizvoda na vrhu razgovora (iz odgovora, bez novih zahtjeva) i status radnog vremena butika (samo kupcu, dok nema poruka).
+function pcardHTML(o) {
+  var media = o.posterUrl ? '<img class="tile-img" width="96" height="128" src="' + esc(o.posterUrl) + '" alt="" loading="lazy">' : icon('video');
+  var sizes = o.sizes && o.sizes.length ? '<span class="psz">' + esc((/^\d/.test(o.sizes[0]) ? 'Br. ' : 'Vel. ') + o.sizes.map(sizeLabel).join(' · ')) + '</span>' : '';
+  return '<button type="button" class="pcard" data-open="' + o.id + '" aria-label="Otvori oglas ' + esc(o.title) + '">' +
+    '<span class="tile-m">' + media + '</span><span><strong>' + esc(o.title) + '</strong>' +
+    '<span class="pp"><em>' + fmtKM(o.price) + '</em>' + (o.oldPrice ? '<s>' + fmtKM(o.oldPrice) + '</s>' : '') + '</span>' + sizes + '</span></button>';
+}
+function pstatusHTML(st) {
+  if (!st) { return ''; }
+  var t = st.open ? 'Butik je otvoren do ' + st.text.replace('Otvoreno do ', '') + '. Odgovor stiže ovdje.'
+    : 'Butik je zatvoren' + (st.text.indexOf('otvara') > -1 ? ' · ' + st.text.slice(st.text.indexOf('otvara')) : '') + '. Odgovor stiže ovdje.';
+  return '<p class="pstatus' + (st.open ? '' : ' is-closed') + '">' + icon('clock') + '<span>' + esc(t) + '</span></p>';
+}
 function openChat(id) {
   show('chat');
-  chatId = String(id); chatLast = 0; chatSizes = []; chatPeerName = '';
+  chatId = String(id); chatLast = 0; chatLastDay = ''; chatSizes = []; chatPeerName = '';
   toApp({ type: 'chat', id: chatId });
-  $('#chatName').textContent = ''; $('#chatListing').textContent = '';
+  $('#chatName').textContent = ''; $('#chatStatus').textContent = ''; $('#chatAvatar').textContent = '';
   $('#chatLog').innerHTML = '<p class="chat-empty">Učitavam razgovor…</p>';
   api('GET', '/api/conversations/' + chatId + '/messages').then(function (d) {
     if (chatId !== String(id)) { return; }
+    var st = d.sagovornik.butik ? hoursStatus(d.sagovornik.hours) : null;
     $('#chatName').textContent = d.sagovornik.name;
-    $('#chatListing').textContent = d.oglas ? 'Oglas: ' + d.oglas.title + ' · ' + fmtKM(d.oglas.price) : '';
+    $('#chatAvatar').textContent = initial(d.sagovornik.name);
+    $('#chatStatus').innerHTML = st ? '<span' + (st.open ? ' class="open"' : '') + '>' + esc(st.text) + '</span>' : '';
     chatSizes = d.oglas && d.oglas.sizes ? d.oglas.sizes : [];
     chatPeerName = d.sagovornik.name;
     setChatBlock(d.blokirao, d.blokirano);
-    $('#chatLog').innerHTML = d.poruke.length ? '' : '<p class="chat-empty">Napiši prvu poruku.</p>';
+    $('#chatLog').innerHTML = (d.oglas ? pcardHTML(d.oglas) : '') +
+      (d.poruke.length ? '' : (isShop() ? '<p class="chat-empty">Napiši prvu poruku.</p>' : pstatusHTML(st) || '<p class="chat-empty">Napiši prvu poruku.</p>'));
     appendMessages(d.poruke);
     chatTimer = staniTajmer(chatTimer);
     chatTimer = tajmer('chat', pollChat, sljedeciRazmak('chat'));
     refreshUnread();
     paintChatForm();
-    if (!$('#chatInput').disabled) { $('#chatInput').focus(); }
+    // Polje ne dobija fokus samo od sebe: tastatura ne smije prekriti karticu i status (M-2).
   }).catch(function (err) { $('#chatLog').innerHTML = '<p class="chat-empty">' + esc(err.message) + '</p>'; });
 }
+$('#chatLog').addEventListener('click', function (e) {
+  var b = e.target.closest('.pcard');
+  if (b && window.__komodoOpenUrl) { window.__komodoOpenUrl('/?o=' + b.getAttribute('data-open')); }
+});
 /* ---------- zaglavlje, traka potvrde i brza pitanja (U-06, U-08, U-09, F-08) ---------- */
 
 var chatSizes = [], chatPeerName = '', chatMineBlock = false;
 var QUICK_BUYER = ['Je li još dostupno?', 'Imate li u veličini …?', 'Može li dostava i koliko košta?', 'Mogu li doći da probam?'];
 var QUICK_SHOP = ['Da, dostupno je.', 'Nažalost, prodato je.', 'Dostava je moguća. Pošaljite adresu i broj telefona.', 'Izvolite u radnju, tu smo.'];
 
-// Ostatak ekrana razgovora gradi skripta: „Više” umjesto dva linka, trake iznad polja za unos i prozor „Više”.
-$('.chat-tools').innerHTML = '<button type="button" class="chat-more" id="chatMore" aria-label="Više" aria-haspopup="dialog"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>';
-(function () {
-  var form = $('#chatForm'), foot = document.createElement('div');
-  foot.className = 'chat-foot';
-  foot.innerHTML = '<div class="chat-bar" id="chatBar" role="status" hidden>' +
-    '<p id="chatBarText"></p><p class="chat-bar-err" id="chatBarErr" role="alert"></p>' +
-    '<button type="button" class="btn" id="chatResend">Pošalji ponovo</button></div>' +
-    '<div class="chat-quick" id="chatQuick" role="group" aria-label="Brza pitanja" hidden></div>';
-  chat.insertBefore(foot, form);
-  foot.appendChild(form);
-  var sheet = document.createElement('div');
-  sheet.className = 'sheet'; sheet.id = 'chatMoreSheet'; sheet.hidden = true;
-  sheet.innerHTML = '<div class="panel" role="dialog" aria-modal="true" aria-label="Više">' +
-    '<button type="button" class="btn sheet-opt" id="chatBlock"></button>' +
-    '<button type="button" class="btn sheet-opt" id="chatReport">Prijavi poruku</button>' +
-    '<button type="button" class="btn sheet-opt" id="chatMoreNo">Odustani</button></div>';
-  chat.parentNode.appendChild(sheet);
-})();
-
 function openChatMore() {
   if (!chatId) { return; }
-  $('#chatBlock').textContent = (chatMineBlock ? 'Odblokiraj ' : 'Blokiraj ') + chatPeerName;
+  $('#chatBlock span').textContent = (chatMineBlock ? 'Odblokiraj ' : 'Blokiraj ') + chatPeerName;
   $('#chatMoreSheet').hidden = false;
   $('#chatBlock').focus();
 }
 function closeChatMore() { $('#chatMoreSheet').hidden = true; }
 $('#chatMore').addEventListener('click', openChatMore);
 $('#chatMoreNo').addEventListener('click', closeChatMore);
+$('#chatMoreClose').addEventListener('click', closeChatMore);
 $('#chatMoreSheet').addEventListener('click', function (e) { if (e.target === $('#chatMoreSheet')) { closeChatMore(); } });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#chatMoreSheet').hidden) { closeChatMore(); } });
 (function () {
@@ -135,15 +152,23 @@ function emailOk() { return !me || me.verified !== false; }
 function paintChatForm() {
   var any = chatBlocked, noMail = !emailOk(), off = any || noMail;
   $('#chatInput').disabled = off;
-  $('#chatForm button[type="submit"]').disabled = off;
   $('#chatInput').placeholder = any ? 'Razgovor je blokiran' : (noMail ? 'Potvrdi email da bi pisao' : 'Napiši poruku');
   $('#chatForm').setAttribute('data-off', off ? '1' : '0');
-  $('#chatBar').hidden = !noMail;
-  if (noMail) {
+  $('#chatForm').hidden = any;
+  $('#chatBar').hidden = !(any || noMail);
+  $('#chatResend').hidden = any;
+  $('#chatBar .chat-bar-err').hidden = any;
+  $('#chatUnblock').hidden = !(any && chatMineBlock);
+  $('#chatUnblock').textContent = 'Odblokiraj ' + chatPeerName;
+  $('#chatBar use').setAttribute('href', any ? '#i-ban' : '#i-mail');
+  if (any) {
+    $('#chatBarText').textContent = 'Razgovor je blokiran.';
+  } else if (noMail) {
     $('#chatBarText').textContent = 'Potvrdi email da bi poslao poruku. Link smo poslali na ' + (me.email || 'tvoj email') + '.';
   }
   paintQuick();
 }
+$('#chatUnblock').addEventListener('click', function () { if (chatId) { doBlock(false); } });
 function quickList() {
   var out = [], k;
   if (isShop()) {
@@ -153,6 +178,7 @@ function quickList() {
   out.push({ label: QUICK_BUYER[0], text: QUICK_BUYER[0] });
   if (chatSizes.length) {
     for (k = 0; k < chatSizes.length && k < 6; k++) {
+      if (chatSizes[k] === 'UNI') { continue; }
       out.push({ label: 'Imate li ' + chatSizes[k] + '?', text: 'Imate li ovo u veličini ' + chatSizes[k] + '?' });
     }
   } else {
@@ -164,6 +190,7 @@ function quickList() {
 }
 function paintQuick() {
   var box = $('#chatQuick');
+  $('#chatSend').disabled = $('#chatInput').disabled || $('#chatInput').value.trim() === '';
   var show = !!chatId && !chatBlocked && emailOk() && $('#chatInput').value === '' && !!chatPeerName;
   if (!show) { box.hidden = true; return; }
   if (!box.getAttribute('data-for') || box.getAttribute('data-for') !== chatId + '|' + chatSizes.join(',') + '|' + (isShop() ? 'b' : 'k')) {

@@ -31,8 +31,13 @@ test('butik: prijava, objava, izmjena, prodato i brisanje s potvrdom', async ({ 
   const odgovor = await objava;
   expect(odgovor.status()).toBe(201);
   const oglas = (await odgovor.json()).oglas;
+  // Redizajn (docs/DIZAJN.md 4.3): umjesto toasta „Oglas je objavljen.” prozor „Oglas je u izlogu”.
+  await expect(page.locator('#postDone')).toBeVisible();
+  await expect(page.locator('#doneTitle')).toHaveText('Oglas je u izlogu');
+  await expect(page.locator('#doneShare')).toBeVisible();
+  await expect(page.locator('#doneAgain')).toBeVisible();
+  await page.locator('#doneClose').click();
   await expect(page.locator('#postSheet')).toBeHidden();
-  await expect(page.locator('#toast')).toHaveText('Oglas je objavljen.');
 
   // Novi oglas je u feedu (prvi, jer je najnoviji). POZNATA GREŠKA: javni feed ima keš od 5 s, pa ga
   // butik odmah poslije objave ne vidi (vidi poseban test ispod); zato se ovdje stranica osvježava dok se ne pojavi.
@@ -95,6 +100,6 @@ test('butik odmah poslije objave vidi novi oglas u feedu', async ({ page }) => {
   const objava = page.waitForResponse((r) => r.url().endsWith('/api/listings') && r.request().method() === 'POST');
   await page.locator('#postSubmit').click();
   const oglas = (await (await objava).json()).oglas;
-  await expect(page.locator('#toast')).toHaveText('Oglas je objavljen.');
+  await expect(page.locator('#doneTitle')).toHaveText('Oglas je u izlogu');
   await expect(page.locator(`.card[data-id="${oglas.id}"]`)).toBeVisible({ timeout: 3000 });
 });

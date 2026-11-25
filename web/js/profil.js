@@ -37,7 +37,8 @@ function openProfileEdit() {
   pauseAll();
   fillShopForm();
   $('#profSheet').hidden = false;
-  $('#sName').focus();
+  if (window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches) { $('#sName').focus(); }
+  else { $('#profClose').focus({ preventScroll: true }); }
 }
 function closeProfileEdit() {
   $('#profSheet').hidden = true;
@@ -45,6 +46,7 @@ function closeProfileEdit() {
 }
 $('#pEdit').addEventListener('click', openProfileEdit);
 $('#shopCancel').addEventListener('click', closeProfileEdit);
+$('#profClose').addEventListener('click', closeProfileEdit);
 $('#profSheet').addEventListener('click', function (e) { if (e.target === $('#profSheet')) { closeProfileEdit(); } });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#profSheet').hidden) { closeProfileEdit(); } });
 // Android Nazad u omotaču (omotac.js) ne zna za ovaj prozor, pa ga ovdje preuzimamo.
@@ -61,7 +63,7 @@ $('#shopForm').addEventListener('submit', function (e) {
   var body = { name: $('#sName').value.trim() };
   if (isShop()) {
     var hours = formHours();
-    if (hours === false) { $('#shopErr').textContent = HOURS_ERR; return; }
+    if (hours === false) { $('#shopErr').textContent = HOURS_ERR; $('#shopErr').scrollIntoView({ block: 'center' }); return; }
     body.phone = $('#sPhone').value.trim(); body.links = formLinks();
     body.address = $('#sAddress').value.trim(); body.hours = hours;
   }
@@ -72,12 +74,12 @@ $('#shopForm').addEventListener('submit', function (e) {
     me = d.korisnik;
     if (typeof me.followingCount !== 'number') { me.followingCount = kept; }
     closeProfileEdit(); renderProfile(); toast('Profil je sačuvan.');
-  }).catch(function (err) { btn.disabled = false; $('#shopErr').textContent = err.message; });
+  }).catch(function (err) { btn.disabled = false; $('#shopErr').textContent = err.message; $('#shopErr').scrollIntoView({ block: 'center' }); });
 });
 var MAX_LINKS = 5;
 function linkRowHTML(value, n) {
   return '<div class="link-row"><input type="url" inputmode="url" maxlength="200" autocomplete="off" id="sLink' + n + '" aria-label="Link ' + (n + 1) + '" placeholder="npr. instagram.com/moj.butik" value="' + esc(value) + '">' +
-    '<button type="button" class="link-x" data-x="' + n + '" aria-label="Ukloni link ' + (n + 1) + '">×</button></div>';
+    '<button type="button" class="icon-btn plain" data-x="' + n + '" aria-label="Ukloni link ' + (n + 1) + '">' + icon('x') + '</button></div>';
 }
 function renderLinks(values) {
   if (!values.length) { values = ['']; }
@@ -124,6 +126,7 @@ function paintProfileHead() {
   $('#pCity').textContent = shopRole && me.city ? ' · ' + me.city : '';
   $('#pLikesBox').hidden = !shopRole;
   $('#pStatsOpen').hidden = !shopRole; $('#pShare').hidden = !shopRole;
+  $('#pActions').classList.toggle('kupac', !shopRole);
   paintProfileFollow();
 }
 function paintProfileFollow() {
@@ -144,8 +147,9 @@ var pTab = 'grid';   // 'grid' (Moji oglasi / Sviđa mi se) ili 'follows' (Prati
 function followRowHTML(b) {
   var line = [b.address || b.city, b.listings + ' ' + butikMnozina(b.listings, 'oglas', 'oglasa', 'oglasa')].filter(Boolean).join(' · ');
   return '<li class="f-item"><button type="button" class="f-open" data-handle="' + esc(b.handle) + '">' +
-    '<strong>' + esc(b.shopName) + '</strong><span>' + esc(line) + '</span></button>' +
-    '<button type="button" class="btn f-btn is-on" data-follow="' + esc(b.handle) + '" data-name="' + esc(b.shopName) + '" aria-pressed="true">Pratiš</button></li>';
+    '<span class="avatar" aria-hidden="true">' + esc(initial(b.shopName)) + '</span>' +
+    '<span class="f-txt"><strong>' + esc(b.shopName) + '</strong><span>' + esc(line) + '</span></span></button>' +
+    '<button type="button" class="btn btn-sm f-btn is-on" data-follow="' + esc(b.handle) + '" data-name="' + esc(b.shopName) + '" aria-pressed="true">Pratiš</button></li>';
 }
 function paintProfileTab() {
   var follows = !isShop() && pTab === 'follows';
@@ -185,6 +189,7 @@ $('#fList').addEventListener('click', function (e) {
 
 $('#delToggle').addEventListener('click', function () {
   $('#delFields').hidden = !$('#delFields').hidden;
+  $('#delToggle').setAttribute('aria-expanded', $('#delFields').hidden ? 'false' : 'true');
   $('#delErr').textContent = '';
 });
 $('#delForm').addEventListener('submit', function (e) {
@@ -236,12 +241,7 @@ function renderProfile() {
 function profileListURL() {
   return isShop() ? '/api/listings?shop=' + encodeURIComponent(me.handle) : '/api/listings?liked=1';
 }
-function profileTileHTML(i, shopRole) {
-  return '<li class="tile">' + tileMedia(i) +
-    '<span class="tile-price">' + fmtKM(i.price) + '</span>' +
-    '<button type="button" class="tile-open" data-open="' + i.id + '" aria-label="Otvori oglas ' + esc(i.title) + '"></button>' +
-    (shopRole ? '<button type="button" class="tile-del" data-del="' + i.id + '" aria-label="Obriši oglas ' + esc(i.title) + '">×</button>' : '') + '</li>';
-}
+function profileTileHTML(i) { return tileHTML(i); }
 var pTotal;   // ukupno iz odgovora (novi API) ili undefined (stari API)
 function paintProfileStats() {
   $('#pCount').textContent = typeof pTotal === 'number' ? pTotal : pItems.length;
@@ -301,9 +301,5 @@ $('#pGrid').addEventListener('click', function (e) {
     renderChips(); show('feed', true); loadFeed(true, o.getAttribute('data-open'));
     return;
   }
-  var b = e.target.closest('[data-del]');
-  if (!b) { return; }
-  var id = b.getAttribute('data-del');
-  confirmAction(DELETE_LISTING, function () { removeListing(id, loadProfileGrid); });
 });
 $('#pPost').addEventListener('click', openPost);

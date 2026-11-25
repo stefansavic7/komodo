@@ -66,6 +66,8 @@ export default function rute(app) {
       [shopName, phone, JSON.stringify(links), pushEnabled, address, hours === null ? null : JSON.stringify(hours), user.id],
     );
     forgetUser(user.id); // i push prekidač (pushEnabled) ide ovuda
+    // Naziv, adresa i radno vrijeme su na karticama feeda (keš 5 s / 60 s): neka se odmah vide, svi procesi.
+    if (isShop && (shopName !== user.shop_name || address !== (user.address ?? '') || JSON.stringify(hours) !== JSON.stringify(user.hours ?? null))) ocistiKesFeeda();
     return { korisnik: publicUser(res.rows[0]) };
   });
 

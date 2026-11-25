@@ -17,7 +17,7 @@ window.__komodoOpenChat = function (id) {
 };
 // Android dugme Nazad: zatvori prozor, vrati se na prethodni ekran ili javi da se aplikacija zatvara.
 function closeOpenSheet() {
-  var sheets = [[$('#confirmSheet'), closeConfirm], [postSheet, closePost], [editSheet, closeEdit], [reportSheet, closeReport], [contactSheet, closeContact]];
+  var sheets = [[$('#confirmSheet'), closeConfirm], [postSheet, closePost], [editSheet, closeEdit], [reportSheet, closeReport], [moreSheet, closeMore], [contactSheet, closeContact], [buyerMoreSheet, closeBuyerMore], [searchSheet, closeSearch]];
   for (var k = 0; k < sheets.length; k++) { if (!sheets[k][0].hidden) { sheets[k][1](); return true; } }
   return false;
 }
@@ -27,7 +27,7 @@ window.__komodoBack = function () {
   if (!admin.hidden) { show('profile'); return; }
   if (!shopView.hidden || !inbox.hidden || !profile.hidden) { show('feed'); return; }
   if (shop) { $('#back').click(); return; }
-  if (!$('#searchForm').hidden || search.q || search.min || search.max) { clearSearch(); return; }
+  if (searchActive()) { clearSearch(); return; }
   toApp({ type: 'exit' });
 };
 $('#pushToggle').addEventListener('change', function () {

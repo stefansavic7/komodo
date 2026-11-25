@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="bs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Komodo — pravac A: Noćni izlog</title>
+<style>
+@font-face{font-family:"Figtree";font-weight:400;font-display:swap;src:url(../../web/fonts/figtree-latin-400-normal.woff2) format("woff2"),url(../../web/fonts/figtree-latin-ext-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Figtree";font-weight:400;font-display:swap;src:url(../../web/fonts/figtree-latin-ext-400-normal.woff2) format("woff2");unicode-range:U+0100-02BA,U+1E00-1EFF}
+@font-face{font-family:"Figtree";font-weight:600;font-display:swap;src:url(../../web/fonts/figtree-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:"Figtree";font-weight:600;font-display:swap;src:url(../../web/fonts/figtree-latin-ext-600-normal.woff2) format("woff2");unicode-range:U+0100-02BA,U+1E00-1EFF}
+@font-face{font-family:"Figtree";font-weight:700;font-display:swap;src:url(../../web/fonts/figtree-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Figtree";font-weight:700;font-display:swap;src:url(../../web/fonts/figtree-latin-ext-700-normal.woff2) format("woff2");unicode-range:U+0100-02BA,U+1E00-1EFF}
+@font-face{font-family:"Bricolage Grotesque";font-weight:700;font-display:swap;src:url(../../web/fonts/bricolage-grotesque-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Bricolage Grotesque";font-weight:700;font-display:swap;src:url(../../web/fonts/bricolage-grotesque-latin-ext-700-normal.woff2) format("woff2");unicode-range:U+0100-02BA,U+1E00-1EFF}
+
+*{box-sizing:border-box} body{margin:0;font:400 16px/1.4 "Figtree",system-ui,sans-serif}
+.wrap{width:1320px;margin:0 auto;padding:40px 24px 56px}
+.opis{display:grid;grid-template-columns:1.1fr 1fr;gap:16px 40px;margin-bottom:40px}
+.opis h1{grid-column:1/-1;margin:0;font:700 40px/1.1 "Bricolage Grotesque",sans-serif}
+.opis p,.opis li{margin:0 0 8px;font-size:16px} .opis ul{margin:0;padding-left:20px}
+.opis h2{margin:0 0 8px;font:700 16px/1.2 "Figtree",sans-serif;text-transform:uppercase;letter-spacing:.06em}
+.row{display:flex;gap:40px;justify-content:center;align-items:flex-start}
+.col{display:grid;gap:16px;justify-items:center}
+.cap{font:600 16px/1.2 "Figtree",sans-serif}
+.phone{position:relative;width:390px;height:844px;border-radius:48px;overflow:hidden;box-shadow:0 0 0 10px #111,0 0 0 11px #444,0 24px 60px rgba(0,0,0,.35)}
+.sb{position:absolute;top:0;left:0;right:0;height:44px;z-index:30;display:flex;justify-content:space-between;align-items:center;padding:0 32px;font:600 15px/1 "Figtree",sans-serif}
+.sb-r{letter-spacing:2px;font-size:11px}
+.hi{position:absolute;bottom:8px;left:50%;width:136px;height:5px;border-radius:3px;transform:translateX(-50%);z-index:40}
+svg{display:block} .sil{position:absolute;left:50%;top:12%;height:66%;transform:translateX(-50%)}
+
+body{background:#0d0a10;color:#f7f1ea}
+.opis{color:#f7f1ea}.opis p,.opis li{color:#cfc4d2}.opis h2{color:#ffd95a}
+.cap{color:#cfc4d2}
+.phone{background:#16121a;color:#f7f1ea}.sb{color:#f7f1ea}.hi{background:#f7f1ea}
+/* sistem: 4 veličine 12/14/16/24 (+ cijena 24), 2 debljine 400/700; razmaci 4/8/12/16/24/32 */
+.media{position:absolute;inset:0}
+.top{position:absolute;top:0;left:0;right:0;z-index:10;padding:44px 0 24px;background:linear-gradient(#16121af2 0,#16121ad0 60%,#16121a00)}
+.bar{display:flex;align-items:center;gap:8px;padding:0 16px;height:48px}
+.tabs-f{display:flex;gap:4px}.tabs-f b{font:700 16px/1 Figtree;padding:16px 8px;color:#d8cfdb}
+.tabs-f b.on{color:#fff;box-shadow:inset 0 -2px 0 #fff}
+.ib{margin-left:auto;width:44px;height:44px;display:grid;place-items:center;border-radius:50%;background:#16121a99}
+.ib svg{width:22px;height:22px}
+.chips{display:flex;gap:8px;padding:4px 16px 0;overflow:hidden}
+.chips span{flex:0 0 auto;height:36px;padding:0 16px;border-radius:18px;display:flex;align-items:center;font:700 14px/1 Figtree;background:#16121a99;border:1px solid #f7f1ea40}
+.chips span.on{background:#f7f1ea;color:#16121a}
+.scrim{position:absolute;left:0;right:0;bottom:0;height:60%;background:linear-gradient(#16121a00,#16121ae6 55%,#16121a)}
+.meta{position:absolute;left:16px;right:72px;bottom:164px;z-index:5;display:grid;gap:8px}
+.shop{display:flex;align-items:center;gap:8px;font:700 14px/1 Figtree}
+.av{width:32px;height:32px;border-radius:50%;background:#ff6a4d;color:#16121a;display:grid;place-items:center;font:700 14px/1 "Bricolage Grotesque"}
+.ok{width:16px;height:16px;border-radius:50%;background:#6fd98c;color:#16121a;display:grid;place-items:center}.ok svg{width:12px}
+.sub{font:400 14px/1.3 Figtree;color:#cfc4d2}
+.t{margin:0;font:700 24px/1.15 "Bricolage Grotesque";letter-spacing:-.01em}
+.prow{display:flex;align-items:center;gap:12px}
+.tag{display:inline-flex;align-items:center;gap:8px;background:#ffd95a;color:#16121a;font:700 24px/1 "Bricolage Grotesque";padding:8px 16px 8px 12px;border-radius:6px 16px 16px 6px;transform:rotate(-2deg)}
+.tag::before{content:"";width:8px;height:8px;border-radius:50%;background:#16121a80}
+.old{font:400 14px/1.2 Figtree;color:#cfc4d2}.old s{display:block}.old b{color:#ff8f78;font-weight:700}
+.sz{display:flex;gap:8px}.sz i{font:700 14px/1 Figtree;font-style:normal;height:32px;min-width:40px;padding:0 8px;border-radius:8px;border:1px solid #f7f1ea80;display:grid;place-items:center}
+.ctaw{position:absolute;left:16px;right:16px;bottom:88px;height:0}
+.cta{position:absolute;left:16px;right:16px;bottom:96px;z-index:6;height:52px;border-radius:26px;background:#ff6a4d;color:#16121a;font:700 16px/1 Figtree;display:flex;align-items:center;justify-content:center;gap:8px}
+.cta svg{width:20px}
+.acts{position:absolute;right:12px;bottom:172px;z-index:6;display:grid;gap:16px;justify-items:center}
+.act{display:grid;justify-items:center;gap:4px;font:700 12px/1 Figtree}
+.act span{width:48px;height:48px;border-radius:50%;background:#16121a99;display:grid;place-items:center}.act svg{width:24px}
+.snd{position:absolute;left:16px;top:184px;z-index:6;height:32px;padding:0 12px;border-radius:16px;background:#16121a99;display:flex;align-items:center;gap:4px;font:700 12px/1 Figtree}.snd svg{width:16px}
+.nav{position:absolute;left:0;right:0;bottom:0;height:80px;padding:8px 16px 28px;background:#16121a;border-top:1px solid #3b3142;display:flex;justify-content:space-around;align-items:center;z-index:20}
+.nav div{display:grid;justify-items:center;gap:4px;font:700 12px/1 Figtree;color:#b9adbd;min-width:56px}.nav svg{width:24px}.nav .on{color:#fff}
+.post{display:flex!important;align-items:center;gap:8px;background:#ff6a4d;color:#16121a!important;padding:0 16px;height:44px;border-radius:22px;font:700 14px/1 Figtree!important}.post svg{width:20px}
+/* profil */
+.scroll{position:absolute;top:44px;left:0;right:0;bottom:80px;overflow:hidden;padding:0 16px}
+.hdr{display:flex;align-items:center;justify-content:space-between;height:48px}
+.hdr b{display:flex;align-items:center;gap:4px;font:700 16px/1 Figtree}.hdr svg{width:24px}
+.ph{display:flex;gap:16px;align-items:center;margin-top:8px}
+.pav{width:64px;height:64px;border-radius:50%;background:#ff6a4d;color:#16121a;display:grid;place-items:center;font:700 24px/1 "Bricolage Grotesque";flex:0 0 64px}
+.pn{display:grid;gap:4px}.pn h2{margin:0;font:700 24px/1.1 "Bricolage Grotesque"}
+.ver{display:inline-flex;align-items:center;gap:4px;font:700 12px/1 Figtree;color:#6fd98c}.ver svg{width:14px}
+.trust{margin-top:16px;display:grid;gap:8px;padding:12px 16px;border-radius:16px;background:#241d2a}
+.trust div{display:flex;align-items:center;gap:8px;font:400 14px/1.3 Figtree}.trust svg{width:18px;color:#b9adbd;flex:0 0 18px}
+.trust .open{color:#6fd98c;font-weight:700}.trust a{margin-left:auto;color:#ffd95a;font-weight:700;text-decoration:none}
+.nums{display:flex;gap:24px;margin-top:16px;font:400 14px/1 Figtree;color:#b9adbd}.nums b{color:#f7f1ea;font:700 16px/1 Figtree;margin-right:4px}
+.pact{display:grid;grid-template-columns:1fr 1fr 48px 48px;gap:8px;margin-top:16px}
+.pact span{height:48px;border-radius:24px;display:grid;place-items:center;font:700 14px/1 Figtree;border:1px solid #6b5f73}
+.pact .pr{background:#ff6a4d;color:#16121a;border-color:#ff6a4d}.pact svg{width:22px}
+.seg{display:flex;gap:8px;margin:24px 0 12px}.seg span{height:36px;padding:0 16px;border-radius:18px;border:1px solid #6b5f73;display:flex;align-items:center;font:700 14px/1 Figtree}.seg .on{background:#f7f1ea;color:#16121a;border-color:#f7f1ea}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tile{display:grid;gap:4px}.tile .tm{position:relative;aspect-ratio:3/4;border-radius:12px;overflow:hidden}
+.tile .tm .sil{top:6%;height:84%}
+.tile em{position:absolute;left:4px;bottom:4px;font:700 12px/1 Figtree;font-style:normal;background:#ffd95a;color:#16121a;padding:4px 8px;border-radius:4px 8px 8px 4px}
+.tile em.s{background:#ff6a4d}
+.tile p{margin:0;font:400 12px/1.25 Figtree;color:#cfc4d2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* objava */
+.sheet{position:absolute;inset:44px 0 0;background:#16121a;padding:0 16px}
+.sh-h{display:flex;align-items:center;justify-content:space-between;height:56px}.sh-h h2{margin:0;font:700 24px/1 "Bricolage Grotesque"}.sh-h span{font:700 14px/1 Figtree;color:#b9adbd}
+.steps{display:flex;gap:4px;margin-bottom:16px}.steps i{flex:1;height:4px;border-radius:2px;background:#3b3142}.steps i.on{background:#ff6a4d}
+.prev{display:grid;grid-template-columns:136px 1fr;gap:16px;align-items:start}
+.pv{position:relative;width:136px;height:240px;border-radius:16px;overflow:hidden}
+.pv .sil{top:8%;height:64%}
+.pv .ov{position:absolute;left:8px;right:8px;bottom:8px;display:grid;gap:4px}
+.pv .ov b{font:700 12px/1.15 "Bricolage Grotesque";color:#fff;text-shadow:0 1px 6px #000}
+.pv .ov em{justify-self:start;font:700 12px/1 "Bricolage Grotesque";font-style:normal;background:#ffd95a;color:#16121a;padding:4px 8px;border-radius:3px 8px 8px 3px}
+.pv .chg{position:absolute;top:8px;right:8px;height:32px;padding:0 12px;border-radius:16px;background:#16121acc;font:700 12px/32px Figtree}
+.pvt{display:grid;gap:8px;font:400 14px/1.35 Figtree;color:#cfc4d2}.pvt b{color:#f7f1ea;font-size:16px}
+.ok2{display:flex;gap:8px;align-items:center;color:#6fd98c;font-weight:700}.ok2 svg{width:18px}
+.fld{display:grid;gap:8px;margin-top:16px}.fld label{font:700 14px/1 Figtree}
+.inp{height:48px;border-radius:12px;border:1px solid #6b5f73;background:#120e15;padding:0 16px;display:flex;align-items:center;font:400 16px/1 Figtree}
+.two{display:grid;grid-template-columns:1fr 1.3fr;gap:12px}
+.szs{display:flex;flex-wrap:wrap;gap:8px}.szs span{min-width:48px;height:44px;border-radius:12px;border:1px solid #6b5f73;display:grid;place-items:center;font:700 14px/1 Figtree}.szs .on{background:#f7f1ea;color:#16121a;border-color:#f7f1ea}
+.stick{position:absolute;left:0;right:0;bottom:0;padding:16px 16px 34px;background:linear-gradient(#16121a00,#16121a 24px);display:grid;gap:8px}
+.stick .cta2{height:56px;border-radius:28px;background:#ff6a4d;color:#16121a;font:700 16px/1 Figtree;display:grid;place-items:center}
+.stick p{margin:0;text-align:center;font:400 12px/1.3 Figtree;color:#b9adbd}
+.end{margin:40px auto 0;width:1218px;display:grid;grid-template-columns:390px 1fr;gap:40px;align-items:center}
+.endc{border-radius:24px;background:#241d2a;padding:24px;display:grid;gap:12px;justify-items:center;text-align:center}
+.endc .big{width:72px;height:72px;border-radius:50%;background:#ffd95a;display:grid;place-items:center;color:#16121a}.endc .big svg{width:40px}
+.endc h3{margin:0;font:700 24px/1.1 "Bricolage Grotesque"}.endc p{margin:0;font:400 14px/1.35 Figtree;color:#cfc4d2}
+.endc .r{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}.endc .r span{height:48px;border-radius:24px;display:grid;place-items:center;font:700 14px/1 Figtree;border:1px solid #6b5f73}.endc .r .pr{background:#ff6a4d;color:#16121a;border-color:#ff6a4d}
+.endt p{color:#cfc4d2;margin:0 0 8px}.endt h3{margin:0 0 8px;font:700 24px/1.1 "Bricolage Grotesque"}
+
+</style></head><body><div class="wrap">
+<section class="opis"><h1>Pravac A — „Noćni izlog”</h1>
+<div><h2>Za koga i šta naglašava</h2><p>Evolucija sadašnje tamne teme. Za kupca koji skroluje uveče kao kroz osvijetljen izlog: video ostaje preko cijelog ekrana, sve oko njega je tiše.</p>
+<ul><li>Kartica: 3 nivoa — butik (s oznakom provjere i „otvoreno do”), naziv, etiketa s cijenom + ušteda; veličine kao okviri koji se čitaju za sekundu.</li>
+<li>Jedno glavno dugme „Pitaj butik” preko cijele širine, u zoni palca; kolona radnji samo srce, podijeli, više (zvuk je jedan prekidač za cijeli feed, „Prijavi” ide u „Više”).</li>
+<li>Profil: povjerenje (adresa, radno vrijeme, provjera) u jednoj kartici, roba iznad pregiba, pločice s nazivom.</li>
+<li>Objava: pregled „ovako ga vide kupci”, pričvršćeno „Objavi oglas”, kraj toka s potvrdom.</li></ul></div>
+<div><h2>Šta se gubi</h2><p>Malo: zadržava se karakter. Natpisi ispod ikona nestaju (oslanjamo se na oznake za čitač ekrana). Koral više nije za „Prati” ni „Sniženo” — samo glavna radnja.</p>
+<h2>Paleta i tipografija</h2><p>Ista paleta; nove uloge: koral = jedna glavna radnja, žuta = samo cijena, zelena = povjerenje/otvoreno. Okvir polja #6b5f73 (3,09:1 na pozadini). 4 veličine (12/14/16/24), 2 debljine (400/700).</p>
+<h2>Trud implementacije</h2><p><b>Mali do srednji (≈ 3–5 dana frontenda).</b> Samo CSS i markup kartice/profila/objave; bez novih zahtjeva ka API-ju (podaci za „otvoreno do” i provjeru već stižu u /api/shops; za karticu feeda treba ih dodati u odgovor oglasa ili prikazati samo na profilu).</p></div></section>
+<div class="row"><div class="col"><span class="cap">Feed</span><div class="phone"><div class="sb"><span>9:41</span><span class="sb-r">● ● ▮</span></div><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#5a5d72,#262634)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M95 92h110l18 330H77z" fill="#c08a55"/><path d="M95 92l-40 14-26 230 28 4 30-170zM205 92l40 14 26 230-28 4-30-170z" fill="#9a6a3c"/><path d="M122 88l28 60 28-60z" fill="#00000055"/><path d="M150 148v274" stroke="#9a6a3c" stroke-width="3"/><circle cx="160" cy="200" r="5" fill="#0006"/><circle cx="160" cy="250" r="5" fill="#0006"/><circle cx="160" cy="300" r="5" fill="#0006"/></svg></div>
+<div class="top"><div class="bar"><svg width="32" height="32" viewBox="60 120 380 280" aria-hidden="true"><g transform="rotate(-14 256 256)"><path d="M186 160h190a36 36 0 0 1 36 36v120a36 36 0 0 1-36 36H186a36 36 0 0 1-27-12l-62-70a22 22 0 0 1 0-28l62-70a36 36 0 0 1 27-12z" fill="#ffd95a"/><circle cx="190" cy="256" r="46" fill="#16121a"/><circle cx="190" cy="256" r="30" fill="#ff6a4d"/><rect x="270" y="226" width="104" height="18" rx="9" fill="#16121a" opacity=".85"/><rect x="270" y="268" width="68" height="18" rx="9" fill="#16121a" opacity=".85"/></g></svg><div class="tabs-f"><b class="on">Za tebe</b><b>Novo</b><b>Praćeni</b></div><span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></span></div>
+<div class="chips"><span class="on">Sve</span><span>Haljine</span><span>Jakne i kaputi</span><span>Obuća</span></div></div>
+<span class="snd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 10l4 4m0-4-4 4"/></svg> Bez zvuka</span>
+<div class="scrim"></div>
+<div class="acts"><div class="act"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></span>4</div><div class="act"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4M6 12v7h12v-7"/></svg></span></div><div class="act"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/></svg></span></div></div>
+<div class="meta">
+<div class="shop"><span class="av">M</span>Moda Bojana<span class="ok" title="Provjeren butik"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span></div>
+<span class="sub">Gospodska 14 · otvoreno do 20:00</span>
+<h2 class="t">Vuneni kaput, kamel</h2>
+<div class="prow"><span class="tag">189 KM</span><span class="old"><s>229 KM</s><b>−40 KM</b></span></div>
+<div class="sz"><i>M</i><i>L</i><i>XL</i></div>
+</div>
+<div class="cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v10H9l-5 4z"/></svg> Pitaj butik</div>
+<nav class="nav"><div class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.5 12 5l8 6.5V20h-5.5v-5h-5v5H4z"/></svg>Početna</div><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v10H9l-5 4z"/></svg>Poruke</div><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.5-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>Profil</div></nav><i class="hi"></i></div></div><div class="col"><span class="cap">Profil butika</span><div class="phone"><div class="sb"><span>9:41</span><span class="sb-r">● ● ▮</span></div><div class="scroll">
+<div class="hdr"><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg> Nazad</b><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4M6 12v7h12v-7"/></svg></b></div>
+<div class="ph"><span class="pav">M</span><div class="pn"><h2>Moda Bojana</h2><span class="ver"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg> Provjeren butik · na Komodu od oktobra 2026.</span></div></div>
+<div class="nums"><span><b>6</b>oglasa</span><span><b>57</b>pratilaca</span><span><b>14</b>sviđanja</span></div>
+<div class="trust"><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg>Gospodska 14, Banja Luka<a>Mapa</a></div><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/></svg><span class="open">Otvoreno do 20:00</span>· sub do 15:00</div></div>
+<div class="pact"><span class="pr">Pošalji poruku</span><span>Prati</span><span title="Pozovi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2 2A16 16 0 0 1 4 6a2 2 0 0 1 2-2z"/></svg></span><span title="Više"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/></svg></span></div>
+<div class="seg"><span class="on">Sve 6</span><span>Haljine</span><span>Jakne</span><span>Pantalone</span></div>
+<div class="grid"><div class="tile"><div class="tm"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#5a5d72,#262634)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M95 92h110l18 330H77z" fill="#c08a55"/><path d="M95 92l-40 14-26 230 28 4 30-170zM205 92l40 14 26 230-28 4-30-170z" fill="#9a6a3c"/><path d="M122 88l28 60 28-60z" fill="#00000055"/><path d="M150 148v274" stroke="#9a6a3c" stroke-width="3"/><circle cx="160" cy="200" r="5" fill="#0006"/><circle cx="160" cy="250" r="5" fill="#0006"/><circle cx="160" cy="300" r="5" fill="#0006"/></svg></div><em class="s">189 KM</em></div><p>Vuneni kaput, kamel</p></div><div class="tile"><div class="tm"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#c9a49a,#6e5058)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M118 100l-8-30M182 100l8-30" stroke="#000" stroke-width="5"/><path d="M118 100h64l10 110 60 220H48l60-220z" fill="#1c1a20"/><path d="M108 205h84l3 16h-90z" fill="#000"/></svg></div><em class="">89 KM</em></div><p>Crna saten haljina, midi</p></div><div class="tile"><div class="tm"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#a87c74,#5a3a3e)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M110 96l-70 40 24 46 32-18v190h108V164l32 18 24-46-70-40c-8 16-22 24-40 24s-32-8-40-24z" fill="#f2ede2"/></svg></div><em class="">45 KM</em></div><p>Pletena dolčevita, krem</p></div><div class="tile"><div class="tm"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#d2c6b0,#8c7a62)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M92 70h116l18 360h-62l-14-260-14 260H74z" fill="#202024"/><path d="M92 70h116v18H92z" fill="#000"/></svg></div><em class="">59 KM</em></div><p>Pantalone visokog struka</p></div><div class="tile"><div class="tm"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#7c927c,#3c4f42)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M118 100l-8-30M182 100l8-30" stroke="#c7b08a" stroke-width="5"/><path d="M118 100h64l10 110 60 220H48l60-220z" fill="#e6d2ae"/><path d="M108 205h84l3 16h-90z" fill="#c7b08a"/></svg></div><em class="s">65 KM</em></div><p>Lanena haljina, bež</p></div><div class="tile"><div class="tm"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#5f7fa8,#2c3c60)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M110 96l-70 40 24 46 32-18v190h108V164l32 18 24-46-70-40c-8 16-22 24-40 24s-32-8-40-24z" fill="#f7f7f2"/></svg></div><em class="">55 KM</em></div><p>Bijela košulja, oversize</p></div></div></div>
+<nav class="nav"><div class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.5 12 5l8 6.5V20h-5.5v-5h-5v5H4z"/></svg>Početna</div><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v10H9l-5 4z"/></svg>Poruke</div><div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.5-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>Profil</div></nav><i class="hi"></i></div></div><div class="col"><span class="cap">Objava oglasa</span><div class="phone"><div class="sb"><span>9:41</span><span class="sb-r">● ● ▮</span></div><div class="sheet">
+<div class="sh-h"><h2>Novi oglas</h2><span>Odustani</span></div>
+<div class="steps"><i class="on"></i><i class="on"></i><i></i></div>
+<div class="prev"><div class="pv"><div class="media" style="background:radial-gradient(70% 45% at 50% 35%,#ffffff40,transparent 70%),linear-gradient(180deg,#7c927c,#3c4f42)"><svg class="sil" viewBox="0 0 300 470" aria-hidden="true"><path d="M150 40v18M150 58l-62 34M150 58l62 34" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M142 34a8 8 0 1 1 8 8" stroke="#3a3a3a" stroke-width="4" fill="none"/><path d="M118 100l-8-30M182 100l8-30" stroke="#c7b08a" stroke-width="5"/><path d="M118 100h64l10 110 60 220H48l60-220z" fill="#e6d2ae"/><path d="M108 205h84l3 16h-90z" fill="#c7b08a"/></svg></div><span class="chg">Promijeni</span><div class="ov"><b>Lanena haljina, bež</b><em>65 KM</em></div></div>
+<div class="pvt"><b>Ovako ga vide kupci</b>Naziv i cijena se upisuju preko snimka dok kucaš.<span class="ok2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg> Video 0:12, uspravno</span></div></div>
+<div class="fld"><label>Naziv</label><div class="inp">Lanena haljina, bež</div></div>
+<div class="two"><div class="fld"><label>Cijena (KM)</label><div class="inp">65</div></div><div class="fld"><label>Kategorija</label><div class="inp">Haljine</div></div></div>
+<div class="fld"><label>Veličine koje imaš</label><div class="szs"><span>XS</span><span class="on">S</span><span class="on">M</span><span>L</span><span>XL</span><span>XXL</span></div></div>
+<div class="stick"><div class="cta2">Objavi oglas</div><p>Ne zatvaraj aplikaciju dok se video šalje.</p></div></div><i class="hi"></i></div></div></div><div class="end"><div class="endc"><span class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><h3>Oglas je u izlogu</h3><p>Lanena haljina, bež · 65 KM. Kupci ga vide čim se video obradi (1–3 minute). 57 pratilaca dobija ga u „Praćeni”.</p><div class="r"><span>Podijeli oglas</span><span class="pr">Objavi još jedan</span></div></div>
+<div class="endt"><h3>Kraj objave (Peak-End)</h3><p>Umjesto toasta „Oglas je objavljen.” — prozor potvrde sa sličicom, brojem pratilaca koji će ga vidjeti i dvije sljedeće radnje. Isti obrazac za prvu poruku kupca: kartica proizvoda na vrhu razgovora i „Butik je otvoren do 20:00 — obično odgovara isti dan.”</p><p>Tekstovi su prijedlog; postojeći iz SPEC-V1 ostaju dok ih proizvod ne odobri.</p></div></div>
+</div></body></html>

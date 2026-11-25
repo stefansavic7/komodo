@@ -6,7 +6,7 @@ pokrenu API kao poseban proces (`api/src/server.js`), a na kraju ga ugase i bazu
 
 | Šta | Gdje | Pokretanje (iz foldera) |
 |---|---|---|
-| API testovi (node:test, 256 testova u 20 fajlova, ~45–55 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
+| API testovi (node:test, 263 testa u 21 fajlu, ~45–55 s u cloud sesiji) | `api/test/*.test.mjs` | `api`: `npm test` |
 | Test istovremenosti | `api/test/opterecenje/istovremenost.mjs` | `api`: `npm run test:istovremenost` |
 | Test opterećenja | `api/test/opterecenje/opterecenje.mjs` | vidi `api/test/opterecenje/README.md` |
 | Punjenje probne baze (samo lokalno) | `api/test/opterecenje/napuni-bazu.mjs` | vidi isti README |
@@ -16,9 +16,9 @@ pokrenu API kao poseban proces (`api/src/server.js`), a na kraju ga ugase i bazu
 
 ## Spisak test fajlova (stanje 24.11.2026.)
 
-API (`api/test/`, ukupno 256): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
+API (`api/test/`, ukupno 263): `admin` 14, `backend-sema` 10, `backend-sigurnost` 24, `butik-pracenje` 9,
 `butik-profil` 8, `butik-sati` 11, `feed-algoritam` 16, `feed-r01-klaster` 4, `nalog` 23, `og-pregled` 15,
-`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `otpornost` 19, `poruke-r04-blokiranje` 7, `poruke` 14, `recenzija3` 15, `sigurnost` 15,
+`oglas-snizenje` 8, `oglas-velicine` 4, `oglasi` 25, `otpornost` 19, `poruke-r04-blokiranje` 7, `poruke` 16, `kartica-butik` 5, `recenzija3` 15, `sigurnost` 15,
 `statistika-admin` 7, `statistika-me` 8.
 
 E2E (`tests/e2e/`): `admin`, `butik-profil`, `butik`, `feed`, `feed-kraj`, `kupac`, `nadogradnja`, `oglas`,

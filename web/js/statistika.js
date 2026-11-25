@@ -26,13 +26,12 @@ var statEl = document.createElement('section');
 statEl.className = 'stat-screen'; statEl.id = 'statScreen'; statEl.hidden = true;
 statEl.setAttribute('aria-label', 'Statistika');
 statEl.innerHTML =
-  '<div class="stat-head"><button type="button" class="back" id="statBack">' +
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Profil</button>' +
+  '<div class="stat-head"><button type="button" class="back" id="statBack">' + icon('back') + 'Profil</button>' +
   '<h2>Statistika</h2></div>' +
-  '<div class="stat-seg" role="group" aria-label="Period">' +
+  '<div class="seg stat-seg" role="group" aria-label="Period">' +
   '<button type="button" data-period="7" aria-pressed="true">7 dana</button>' +
   '<button type="button" data-period="30" aria-pressed="false">30 dana</button></div>' +
-  '<p class="hint" id="statHint"></p>' +
+  '<p class="hint" id="statHint" role="status"></p>' +
   '<div id="statBody" hidden></div>';
 document.querySelector('.app').appendChild(statEl);
 
@@ -82,14 +81,14 @@ function loadStats() {
   var seq = ++statSeq;
   statPaintSeg();
   $('#statBody').hidden = true;
-  $('#statHint').innerHTML = 'Učitavam statistiku…';
+  $('#statHint').innerHTML = '<span class="vh">Učitavam statistiku…</span><span class="stat-sk" aria-hidden="true"><span class="sk" style="height:88px;border-radius:16px"></span><span class="sk" style="height:88px;border-radius:16px"></span><span class="sk" style="height:160px;border-radius:16px"></span></span>';
   api('GET', '/api/me/stats?period=' + statPeriod).then(function (d) {
     if (seq !== statSeq) { return; }
     $('#statHint').textContent = '';
     paintStats(d.statistika);
   }).catch(function (err) {
     if (seq !== statSeq) { return; }
-    $('#statHint').innerHTML = '<span id="statErr"></span> <button type="button" class="link" id="statRetry">Pokušaj ponovo</button>';
+    $('#statHint').innerHTML = '<span class="err" id="statErr"></span> <button type="button" class="btn btn-sm" id="statRetry">Pokušaj ponovo</button>';
     $('#statErr').textContent = err.message;
     $('#statRetry').addEventListener('click', loadStats);
   });
@@ -98,26 +97,29 @@ function loadStats() {
 function statTile(label, n) {
   return '<div class="stat-tile"><strong>' + fmtBroj(n) + '</strong><span>' + label + '</span></div>';
 }
+function statDay(iso) { return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.'; }
 function statDaysChart(dani) {
-  var max = 0, k;
+  var max = 0, k, mid = dani[Math.floor((dani.length - 1) / 2)];
   for (k = 0; k < dani.length; k++) { if (dani[k].views > max) { max = dani[k].views; } }
   if (!max) { return ''; }
-  return '<div class="stat-chart" role="img" aria-label="Pregledi po danima">' + dani.map(function (x) {
-    var h = Math.max(2, Math.round(x.views / max * 100));
-    return '<span class="stat-bar" title="' + esc(x.day) + ': ' + x.views + '"><i style="height:' + h + '%"></i></span>';
-  }).join('') + '</div>' +
-  '<div class="stat-axis"><span>' + esc(dani[0].day.slice(8, 10) + '.' + dani[0].day.slice(5, 7) + '.') + '</span><span>' +
-  esc(dani[dani.length - 1].day.slice(8, 10) + '.' + dani[dani.length - 1].day.slice(5, 7) + '.') + '</span></div>';
+  var maxAt = -1;
+  for (k = 0; k < dani.length; k++) { if (dani[k].views === max) { maxAt = k; break; } }
+  return '<div class="chart"><div class="chart-top"><b>Pregledi po danu</b><span>najviše ' + fmtBroj(max) + '</span></div>' +
+    '<div class="chart-bars" role="img" aria-label="Pregledi po danima">' + dani.map(function (x, n) {
+      var h = Math.max(2, Math.round(x.views / max * 100));
+      return '<i' + (n === maxAt ? ' class="max"' : '') + ' title="' + esc(x.day) + ': ' + x.views + '" style="height:' + h + '%"></i>';
+    }).join('') + '</div>' +
+    '<div class="chart-axis"><span>' + statDay(dani[0].day) + '</span><span>' + statDay(mid.day) + '</span><span>' + statDay(dani[dani.length - 1].day) + '</span></div></div>';
 }
 function statRow(l, focus) {
   var line = fmtBroj(l.views) + ' ' + statMnozina(l.views, 'pregled', 'pregleda', 'pregleda') + ' · ' +
     fmtBroj(l.likes) + ' ' + statMnozina(l.likes, 'sviđanje', 'sviđanja', 'sviđanja') + ' · ' +
     fmtBroj(l.contacts) + ' ' + statMnozina(l.contacts, 'razgovor', 'razgovora', 'razgovora');
   return '<li class="stat-item' + (focus ? ' is-focus' : '') + '" data-id="' + l.id + '">' +
-    '<div class="stat-thumb">' + tileMedia(l) + '</div>' +
-    '<div class="stat-info"><strong>' + esc(l.title) + '</strong>' +
-    '<span class="stat-price">' + esc(fmtKM(l.price)) + (l.sold ? ' · prodato' : '') + '</span>' +
-    '<span class="stat-line">' + line + '</span></div></li>';
+    '<div class="tile-m">' + tileMedia(l) + '</div>' +
+    '<div><strong>' + esc(l.title) + '</strong>' +
+    '<span>' + esc(fmtKM(l.price)) + (l.sold ? ' · prodato' : '') + '</span>' +
+    '<span>' + line + '</span></div></li>';
 }
 function paintStats(s) {
   var t = s.ukupno, list = s.oglasi.slice(), k, empty = true;
@@ -131,7 +133,7 @@ function paintStats(s) {
     '<div class="stat-tiles">' + statTile('Pregledi', t.views) + statTile('Sviđanja', t.likes) +
     statTile('Razgovori', t.contacts) + statTile('Novi pratioci', t.newFollowers) + '</div>' +
     (empty ? '<p class="hint">Još nema podataka za ovaj period. Brojke rastu kad kupci gledaju tvoje snimke.</p>' : statDaysChart(s.dani)) +
-    '<h3>Oglasi</h3>' +
+    '<div class="sec-head"><h2>Oglasi</h2></div>' +
     (list.length ? '<ul class="stat-list">' + list.map(function (l) { return statRow(l, statFocus && String(l.id) === statFocus); }).join('') + '</ul>'
       : '<p class="hint">Još nemaš oglasa.</p>') +
     '<p class="hint">Pregled = jedan kupac pogledao oglas tog dana. Razgovor = kupac ti je pisao iz tog oglasa.<br>Brojke se osvježavaju svakih 5 minuta.</p>';

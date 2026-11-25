@@ -148,7 +148,7 @@ export function publicUser(u) {
 
 // Precrtana cijena (F-07): samo dok je sniženje mlađe od 7 dana i stara cijena veća od trenutne.
 const DROP_DAYS = 7;
-function oldPrice(r) {
+export function oldPrice(r) {
   if (!r.old_price_cents || !r.price_dropped_at || r.old_price_cents <= r.price_cents) return null;
   if (Date.now() - new Date(r.price_dropped_at).getTime() > DROP_DAYS * 24 * 3600 * 1000) return null;
   return r.old_price_cents / 100;
@@ -166,6 +166,9 @@ export function publicListing(r) {
     createdAt: r.created_at,
     shopName: r.shop_name,
     handle: r.handle,
+    // Redizajn: kartica feeda piše „{adresa} · otvoreno do …”; status računa klijent (hoursStatus), pa nema novih zahtjeva.
+    shopAddress: r.shop_address || '',
+    shopHours: r.shop_hours ?? null,
     likes: Number(r.likes_count),
     liked: r.liked === true,
     mine: r.mine === true,
@@ -194,7 +197,7 @@ export const LISTING_SELECT = `
          l.video_provider, l.video_status, l.bunny_guid, l.video_res,
          (l.likes_count + coalesce((select sum(dd.delta) from listing_likes_delta dd where dd.listing_id = l.id), 0))::int as likes_count,
          l.sizes, l.sold_at, l.old_price_cents, l.price_dropped_at, l.price_set_at,
-         u.shop_name, u.handle,
+         u.shop_name, u.handle, u.address as shop_address, u.hours as shop_hours,
          exists(select 1 from likes k where k.listing_id = l.id and k.user_id = $1) as liked,
          (l.user_id = $1) as mine
     from listings l

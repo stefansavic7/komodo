@@ -44,21 +44,36 @@ function toggleSize(arr, v) {
   if (k === -1) { arr.push(v); } else { arr.splice(k, 1); }
   return arr;
 }
-// Moje veličine (filter): pamte se u localStorage['komodo.velicine'] dok se ne ponište.
-function loadMySizes() {
+// Moje veličine (filter) se pamte po grupi u localStorage['komodo.velicine'] = {"odjeca":["M"],"obuca":["38"]} (ispravka P-2).
+// Stari zapis (običan niz) se pri čitanju razvrsta po skupovima veličina (F-03).
+function cleanSizeGroup(arr, set) {
   var out = [];
+  for (var k = 0; k < arr.length; k++) { if (set.indexOf(arr[k]) !== -1 && out.indexOf(arr[k]) === -1) { out.push(arr[k]); } }
+  return out;
+}
+function loadMySizes() {
+  var out = { odjeca: [], obuca: [] };
   try {
-    var a = JSON.parse(localStorage.getItem('komodo.velicine') || '[]');
-    for (var k = 0; k < a.length && out.length < SIZE_MAX_FILTER; k++) {
-      if ((SIZE_ODJECA.indexOf(a[k]) !== -1 || SIZE_OBUCA.indexOf(a[k]) !== -1) && out.indexOf(a[k]) === -1) { out.push(a[k]); }
+    var a = JSON.parse(localStorage.getItem('komodo.velicine') || '{}');
+    if (Array.isArray(a)) { a = { odjeca: a, obuca: a }; }
+    if (a && typeof a === 'object') {
+      out.odjeca = cleanSizeGroup(Array.isArray(a.odjeca) ? a.odjeca : [], SIZE_ODJECA);
+      out.obuca = cleanSizeGroup(Array.isArray(a.obuca) ? a.obuca : [], SIZE_OBUCA);
     }
-  } catch (e) { out = []; }
+  } catch (e) { out = { odjeca: [], obuca: [] }; }
+  while (out.odjeca.length + out.obuca.length > SIZE_MAX_FILTER) { if (out.odjeca.length) { out.odjeca.pop(); } else { out.obuca.pop(); } }
   return out;
 }
 var mojeVelicine = loadMySizes();
 function saveMySizes() { try { localStorage.setItem('komodo.velicine', JSON.stringify(mojeVelicine)); } catch (e) {} }
-// Za Torbe i Nakit se filter veličine ne šalje.
-function activeSizes() { return (filter === 'Torbe' || filter === 'Nakit') ? [] : mojeVelicine; }
+function anyMySizes() { return mojeVelicine.odjeca.length + mojeVelicine.obuca.length > 0; }
+// Šta se šalje u sizes=: Obuća samo obuća; Torbe i Nakit ništa; „Sve” obje grupe (server radi uniju); ostalo samo odjeća.
+function activeSizes() {
+  if (filter === 'Torbe' || filter === 'Nakit') { return []; }
+  if (filter === 'Obuća') { return mojeVelicine.obuca; }
+  if (filter === 'Sve') { return mojeVelicine.odjeca.concat(mojeVelicine.obuca); }
+  return mojeVelicine.odjeca;
+}
 
 /* ---------- U-04: namjera se ne gubi ---------- */
 
@@ -78,12 +93,8 @@ function needAccount(p) {
   show('profile');
 }
 
-function soundBtnInner() {
-  return (soundOn ? ICON.soundOn : ICON.soundOff) + '<span class="n">' + (soundOn ? 'Zvuk' : 'Bez zvuka') + '</span>';
-}
 // Broj sviđanja na kartici; 0 se ne piše (samo srce).
 function likeCount(i) { return i.likes > 0 ? String(i.likes) : ''; }
-var ICON_MORE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/></svg>';
 var moreSheet = $('#moreSheet'), moreItem = null;
 function followBtnHTML(i) {
   if (i.mine) { return ''; }
@@ -107,50 +118,88 @@ function paintAllFollow() {
     if (it && !it.mine) { paintFollowBtns(it.handle); }
   }
 }
+// Veličine kao okviri na kartici; skriveni dijelovi čuvaju tekst „Vel. M · L” za čitač ekrana (i testove).
+function sizesHTML(sizes) {
+  if (!sizes || !sizes.length) { return ''; }
+  if (sizes.length === 1 && sizes[0] === 'UNI') { return '<p class="vel"><b>Jedna veličina</b></p>'; }
+  var shoe = /^\d/.test(sizes[0]);
+  var shown = sizes.length > 6 ? sizes.slice(0, 5) : sizes;
+  var out = '<span class="vh">' + (shoe ? 'Br. ' : 'Vel. ') + '</span>';
+  for (var k = 0; k < shown.length; k++) {
+    out += (k ? '<span class="vh"> · </span>' : '') + '<b>' + esc(sizeLabel(shown[k])) + '</b>';
+  }
+  if (sizes.length > 6) { out += '<span class="vh"> · </span><b>+' + (sizes.length - 5) + '</b>'; }
+  return '<p class="vel">' + out + '</p>';
+}
+// „{adresa} · otvoreno do 20:00” / „… · otvara sutra u 09:00”; status računa klijent iz radnog vremena (bez zahtjeva).
+function shopSubHTML(i) {
+  var adr = i.shopAddress ? '<span class="adr">' + esc(i.shopAddress) + '</span>' : '', st = typeof hoursStatus === 'function' ? hoursStatus(i.shopHours) : null, stH = '';
+  if (st) {
+    var txt = st.open ? st.text.charAt(0).toLowerCase() + st.text.slice(1) : st.text.replace(/^Zatvoreno · /, '').replace(/^Zatvoreno$/, 'zatvoreno');
+    stH = '<span class="st">' + (adr ? '· ' : '') + '<span' + (st.open ? ' class="open"' : '') + '>' + esc(txt) + '</span></span>';
+  }
+  return adr || stH ? '<p class="shop-sub">' + adr + stH + '</p>' : '';
+}
+// Ušteda: „229 KM” precrtano, ispod „Sniženo −40 KM”.
+function saveHTML(i) {
+  if (!i.oldPrice) { return ''; }
+  var diff = Math.round((i.oldPrice - i.price) * 100) / 100;
+  return '<span class="save"><s class="old-price">' + fmtKM(i.oldPrice) + '</s><span><span class="drop">Sniženo</span> <b>−' + fmtKM(diff) + '</b></span></span>';
+}
 function cardHTML(i) {
-  var vel = sizesLine(i.sizes);
-  return '<article class="card' + (i.sold ? ' is-sold' : '') + '" data-id="' + i.id + '">' +
+  return '<article class="card' + (i.sold ? ' is-sold' : '') + (i.mine ? ' is-mine' : '') + '" data-id="' + i.id + '">' +
     '<video class="media" src="' + esc(i.videoUrl) + '"' + (i.posterUrl ? ' poster="' + esc(i.posterUrl) + '"' : '') + ' playsinline muted loop preload="metadata"></video>' +
     '<div class="scrim"></div>' +
     '<div class="meta">' +
-      '<div class="seller-row"><button type="button" class="seller-btn" data-act="shop"><span class="avatar" aria-hidden="true">' + esc(initial(i.shopName)) + '</span><span>' + esc(i.shopName) + '</span></button>' + followBtnHTML(i) + '</div>' +
+      '<div class="seller-row"><button type="button" class="seller-btn" data-act="shop"><span class="avatar" aria-hidden="true">' + esc(initial(i.shopName)) + '</span><span>' + esc(i.shopName) + '</span></button>' +
+        '<span class="ok-badge" role="img" aria-label="Provjeren butik">' + icon('check') + '</span>' + followBtnHTML(i) + '</div>' +
+      shopSubHTML(i) +
       '<h2 class="title">' + esc(i.title) + '</h2>' +
-      (i.processing && i.mine ? '<p class="state">Obrađuje se — kupci će ga vidjeti za 1–3 minute.</p>' : '') +
-      (i.videoError ? '<p class="state state-err">Obrada videa nije uspjela. Obriši oglas i objavi video ponovo.</p>' : '') +
-      '<p class="row">' + (i.oldPrice ? '<s class="old-price">' + fmtKM(i.oldPrice) + '</s>' : '') + '<span class="price">' + fmtKM(i.price) + '</span>' +
-        (i.oldPrice ? '<span class="drop">Sniženo</span>' : '') + (i.sold ? '<span class="sold">Prodato</span>' : '') + '<span class="cat">' + esc(i.category) + '</span>' +
-        (i.mine ? '<span class="views">' + (i.views || 0) + ' pregleda</span>' : '') + '</p>' +
-      (vel ? '<p class="vel">' + esc(vel) + '</p>' : '') +
-      (i.mine ? '' : '<button type="button" class="cta" data-act="contact">Kontaktiraj butik</button>') +
+      (i.processing && i.mine ? '<p class="state">' + icon('clock') + 'Obrađuje se — kupci će ga vidjeti za 1–3 minute.</p>' : '') +
+      (i.videoError ? '<p class="state state-err">' + icon('alert') + 'Obrada videa nije uspjela. Obriši oglas i objavi video ponovo.</p>' : '') +
+      '<div class="row"><span class="price">' + fmtKM(i.price) + '</span>' + saveHTML(i) + (i.sold ? '<span class="sold">Prodato</span>' : '') +
+        (i.mine ? '<span class="views">' + (i.views || 0) + ' pregleda</span>' : '') + '</div>' +
+      sizesHTML(i.sizes) +
     '</div>' +
     '<div class="actions">' +
-      '<button type="button" class="act' + (i.liked ? ' on' : '') + '" data-act="like" aria-pressed="' + (i.liked ? 'true' : 'false') + '" aria-label="Sviđa mi se">' + ICON.heart + '<span class="n">' + likeCount(i) + '</span></button>' +
-      '<button type="button" class="act" data-act="share" aria-label="Podijeli oglas">' + ICON.share + '<span class="n">Podijeli</span></button>' +
-      '<button type="button" class="act" data-act="sound" aria-label="Uključi ili isključi zvuk">' + soundBtnInner() + '</button>' +
-      (i.mine
-        ? '<button type="button" class="act" data-act="more" aria-label="Više" aria-haspopup="dialog">' + ICON_MORE + '<span class="n">Više</span></button>'
-        : '<button type="button" class="act" data-act="report" aria-label="Prijavi oglas">' + ICON.flag + '<span class="n">Prijavi</span></button>') +
-    '</div></article>';
+      '<button type="button" class="act' + (i.liked ? ' on' : '') + '" data-act="like" aria-pressed="' + (i.liked ? 'true' : 'false') + '" aria-label="Sviđa mi se"><span>' + ICON.heart + '</span><span class="n">' + likeCount(i) + '</span></button>' +
+      '<button type="button" class="act" data-act="share" aria-label="Podijeli oglas"><span>' + ICON.share + '</span></button>' +
+      '<button type="button" class="act" data-act="more" aria-label="Više" aria-haspopup="dialog"><span>' + ICON.more + '</span></button>' +
+    '</div>' +
+    (i.mine ? '' : '<div class="card-cta"><button type="button" class="cta" data-act="contact">' + icon('chat', 'i-sm') + 'Kontaktiraj</button></div>') +
+  '</article>';
+}
+// Prazno stanje: krug s ikonom, naslov, tekst i dugmad (docs/DIZAJN.md 1.7).
+function emptyCard(ico, h2, p, btns, cls) {
+  return '<article class="card empty' + (cls ? ' ' + cls : '') + '"><div class="empty-box"><span class="empty-ico">' + icon(ico) + '</span>' +
+    (h2 ? '<h2>' + h2 + '</h2>' : '') + (p ? '<p>' + p + '</p>' : '') + (btns ? '<div class="btns-v">' + btns + '</div>' : '') + '</div></article>';
+}
+function emptyBtn(act, text, main) {
+  return '<button type="button" class="btn ' + (main === false ? '' : 'btn-main ') + 'btn-wide" data-act="' + act + '">' + text + '</button>';
+}
+function loadingHTML() {
+  return '<article class="card loading" aria-busy="true"><div class="sk sk-media"></div><div class="meta">' +
+    '<div class="seller-row"><span class="sk sk-avatar"></span><span class="sk sk-line" style="width:120px"></span></div>' +
+    '<div class="sk sk-line" style="width:180px"></div><div class="sk sk-title"></div><div class="sk sk-price"></div>' +
+    '<div class="sk-vel"><span class="sk"></span><span class="sk"></span></div></div>' +
+    '<div class="card-cta"><div class="sk sk-cta"></div></div><p class="vh" role="status">Učitavam oglase…</p></article>';
 }
 function emptySizesHTML() {
-  return '<article class="card empty"><div class="empty-box"><h2>Nema oglasa u tvojoj veličini</h2>' +
-    '<p>Probaj bez filtera veličine.</p><button type="button" class="cta" data-act="clearsizes">Poništi veličine</button></div></article>';
+  return emptyCard('sliders', 'Nema oglasa u tvojoj veličini', 'Probaj bez filtera veličine.', emptyBtn('clearsizes', 'Poništi veličine'));
 }
 function emptyHTML() {
   if (activeSizes().length) { return emptySizesHTML(); }
   if (search.q || search.min || search.max) {
-    return '<article class="card empty"><div class="empty-box"><h2>Nema oglasa za ovu pretragu</h2>' +
-      '<p>Probaj drugu riječ ili širi raspon cijene.</p><button type="button" class="cta" data-act="clear">Poništi pretragu</button></div></article>';
+    return emptyCard('search', 'Nema oglasa za ovu pretragu', 'Probaj drugu riječ ili širi raspon cijene.', emptyBtn('clear', 'Poništi pretragu'));
   }
   var where = shop ? 'Ovaj butik još nema oglasa' : (filter === 'Sve' ? 'Još nema oglasa' : 'Još nema oglasa u kategoriji ' + esc(filter));
-  return '<article class="card empty"><div class="empty-box"><h2>' + where + '</h2>' +
-    (isShop() ? '<p>Snimi proizvod, upiši naziv i cijenu, i oglas je tu.</p><button type="button" class="cta" data-act="post">Objavi video</button>'
-              : '<p>Butici uskoro dodaju prve snimke. Svrati opet.</p>') +
-    (filter !== 'Sve' ? '<button type="button" class="cta" data-act="all">Pogledaj sve oglase</button>' : '') + '</div></article>';
+  return emptyCard('tag', where,
+    isShop() ? 'Snimi proizvod, upiši naziv i cijenu, i oglas je tu.' : 'Butici uskoro dodaju prve snimke. Svrati opet.',
+    (isShop() ? emptyBtn('post', 'Objavi video') : '') + (filter !== 'Sve' ? emptyBtn('all', 'Pogledaj sve oglase', !isShop()) : ''));
 }
 function watch() {
   if (io) { io.disconnect(); io = null; }
-  if (!('IntersectionObserver' in window)) { return; }
+  if (!('IntersectionObserver' in window) || document.querySelector('.sheet:not([hidden])')) { return; }
   io = new IntersectionObserver(function (entries) {
     entries.forEach(function (en) {
       var v = en.target.querySelector('video');
@@ -210,24 +259,20 @@ ftabs.addEventListener('click', function (e) {
 });
 function pracenEmptyHTML() {
   if (!me) {
-    return '<article class="card empty"><div class="empty-box"><h2>Prati butike koji ti se sviđaju</h2>' +
-      '<p>Njihovi novi snimci će biti ovdje.</p><button type="button" class="cta" data-act="nalog">Napravi nalog</button></div></article>';
+    return emptyCard('users', 'Prati butike koji ti se sviđaju', 'Njihovi novi snimci će biti ovdje.', emptyBtn('nalog', 'Napravi nalog'));
   }
   if (!(me.followingCount > 0)) {
-    return '<article class="card empty"><div class="empty-box"><h2>Još ne pratiš nijedan butik</h2>' +
-      '<p>Dodirni „Prati” pored imena butika na oglasu ili na njegovom profilu.</p>' +
-      '<button type="button" class="cta" data-act="zatebe">Idi na Za tebe</button></div></article>';
+    return emptyCard('users', 'Još ne pratiš nijedan butik', 'Dodirni „Prati” pored imena butika na oglasu ili na njegovom profilu.', emptyBtn('zatebe', 'Idi na Za tebe'));
   }
   if (activeSizes().length) { return emptySizesHTML(); }
-  return '<article class="card empty"><div class="empty-box"><h2>Butici koje pratiš još nemaju oglasa.</h2>' +
-    (filter !== 'Sve' ? '<button type="button" class="cta" data-act="all">Pogledaj sve oglase</button>' : '') + '</div></article>';
+  return emptyCard('users', 'Butici koje pratiš još nemaju oglasa.', '', filter !== 'Sve' ? emptyBtn('all', 'Pogledaj sve oglase') : '');
 }
 // R2-01: „Prikaži još” poslije PRAZNIH_NAJVISE strana zaredom bez novih oglasa (dalje samo na dodir).
 function josHTML() {
-  return '<article class="card empty jos"><div class="empty-box"><button type="button" class="cta" data-act="jos">Prikaži starije oglase</button></div></article>';
+  return emptyCard('refresh', '', '', emptyBtn('jos', 'Prikaži starije oglase', false), 'jos');
 }
 function dividerHTML() {
-  return '<article class="card empty razdjelnik"><div class="empty-box"><h2>To je sve za sada u „Za tebe”. Slijede najnoviji oglasi.</h2></div></article>';
+  return emptyCard('check', 'To je sve za sada u „Za tebe”. Slijede najnoviji oglasi.', '', '', 'razdjelnik');
 }
 function feedUrl(mode, reset) {
   var qs = [];
@@ -261,7 +306,7 @@ function feedUrl(mode, reset) {
 var IZUZMI_MAX = 400, PRAZNIH_NAJVISE = 2, RAZMAK_MS = 1000;
 var praznihZaredom = 0, zadnjeUcitavanje = 0, odgodaUcitavanja = null;
 function loadFeed(reset, firstId) {
-  if (reset) { pickTab(); }
+  if (reset) { hideUputa(); pickTab(); }
   renderTabs();
   if (loading || (!reset && noMore)) { return Promise.resolve(); }
   if (!reset) {
@@ -284,7 +329,7 @@ function loadFeed(reset, firstId) {
     return Promise.resolve();
   }
   loading = true;
-  if (reset) { feed.innerHTML = '<article class="card loading"><p>Učitavam oglase…</p></article>'; }
+  if (reset) { feed.innerHTML = loadingHTML(); }
   var cont = mode === 'zatebe' && zaTebeKraj;      // strana „Novo” poslije kraja „Za tebe”
   var url = (mode === 'praceni' && !me) ? null : feedUrl(mode, reset);
   var first = (reset && firstId) ? api('GET', '/api/listings/' + firstId).then(function (d) { return d.oglas; }, function () { toast('Taj oglas više ne postoji.'); return null; }) : Promise.resolve(null);
@@ -342,8 +387,7 @@ function loadFeed(reset, firstId) {
   }).catch(function (err) {
     loading = false;
     if (reset) {
-      feed.innerHTML = '<article class="card empty"><div class="empty-box"><h2>Oglasi se nisu učitali</h2><p>' + esc(err.message) + '</p>' +
-        '<button type="button" class="cta" data-act="retry">Pokušaj ponovo</button></div></article>';
+      feed.innerHTML = emptyCard('wifi-off', 'Oglasi se nisu učitali', esc(err.message), emptyBtn('retry', 'Pokušaj ponovo'));
     } else { toast(err.message, true); }
   });
 }
@@ -459,13 +503,19 @@ document.addEventListener('visibilitychange', function () {
   hiddenAt = 0;
 });
 window.addEventListener('pagehide', flushViewsOnHide);
+// Zvuk je prekidač cijelog feeda u gornjoj traci (#soundToggle), ne dugme na svakoj kartici.
+var soundToggle = $('#soundToggle');
+function paintSound() {
+  soundToggle.setAttribute('aria-pressed', soundOn ? 'true' : 'false');
+  soundToggle.innerHTML = icon(soundOn ? 'sound-on' : 'sound-off');
+}
 function toggleSound() {
   soundOn = !soundOn;
   var vs = feed.querySelectorAll('video');
   for (var k = 0; k < vs.length; k++) { vs[k].muted = !soundOn; }
-  var bs = feed.querySelectorAll('[data-act="sound"]');
-  for (var j = 0; j < bs.length; j++) { bs[j].innerHTML = soundBtnInner(); }
+  paintSound();
 }
+soundToggle.addEventListener('click', toggleSound);
 
 feed.addEventListener('click', function (e) {
   var btn = e.target.closest('[data-act]');
@@ -493,9 +543,7 @@ feed.addEventListener('click', function (e) {
   if (!btn) { if (e.target.closest('video')) { toggleSound(); } return; }
   var item = byId(card.getAttribute('data-id'));
   if (!item) { return; }
-  if (act === 'sound') {
-    toggleSound();
-  } else if (act === 'shop') {
+  if (act === 'shop') {
     openShopProfile(item.handle);
   } else if (act === 'contact') {
     openContact(item);
@@ -505,11 +553,9 @@ feed.addEventListener('click', function (e) {
   } else if (act === 'follow') {
     toggleFollowCard(item, btn);
   } else if (act === 'more') {
-    openMore(item);
+    if (item.mine) { openMore(item); } else { openBuyerMore(item); }
   } else if (act === 'share') {
     shareListing(item);
-  } else if (act === 'report') {
-    openReport({ listingId: item.id }, 'Prijavi oglas');
   }
 });
 
@@ -560,15 +606,17 @@ function applyUpdated(oglas) {
 function openMore(item) {
   pauseAll();
   moreItem = item;
-  $('#moreSold').textContent = item.sold ? 'Vrati u prodaju' : 'Označi kao prodato';
+  $('#moreTitle').textContent = item.title;
+  $('#moreSoldLbl').textContent = item.sold ? 'Vrati u prodaju' : 'Označi kao prodato';
   $('#moreStats').hidden = typeof openStats !== 'function';
   moreSheet.hidden = false;
-  moreSheet.querySelector('.btn').focus();
+  moreSheet.querySelector('.menu-item').focus();
 }
 function closeMore(keepPaused) {
   moreSheet.hidden = true; moreItem = null;
   if (!keepPaused && !feed.hidden) { watch(); }
 }
+$('#moreClose').addEventListener('click', function () { closeMore(); });
 moreSheet.addEventListener('click', function (e) {
   if (e.target === moreSheet) { closeMore(); return; }
   var b = e.target.closest('[data-more]');
@@ -593,6 +641,50 @@ moreSheet.addEventListener('click', function (e) {
   }
 });
 
+/* ---------- „Više” za kupca: profil butika, kopiranje linka, prijava (docs/DIZAJN.md 2.8) ---------- */
+
+var buyerMoreSheet = $('#buyerMoreSheet'), buyerItem = null;
+function openBuyerMore(item) {
+  pauseAll();
+  buyerItem = item;
+  $('#buyerMoreTitle').textContent = item.title;
+  $('#bmShop').textContent = 'Profil butika ' + item.shopName;
+  buyerMoreSheet.hidden = false;
+  buyerMoreSheet.querySelector('.menu-item').focus();
+}
+function closeBuyerMore(keepPaused) {
+  buyerMoreSheet.hidden = true; buyerItem = null;
+  if (!keepPaused && !feed.hidden) { watch(); }
+}
+// Kopiranje: Clipboard API, a u starim WebView-ima privremeno polje; bez oba, link se samo ispiše.
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) { return navigator.clipboard.writeText(text); }
+  return new Promise(function (resolve, reject) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (ok) { resolve(); } else { reject(new Error('copy')); }
+  });
+}
+buyerMoreSheet.addEventListener('click', function (e) {
+  if (e.target === buyerMoreSheet) { closeBuyerMore(); return; }
+  var c = e.target.closest('[data-bmore="close"]');
+  if (c) { closeBuyerMore(); return; }
+  var b = e.target.closest('[data-act]');
+  if (!b || !buyerItem) { return; }
+  var what = b.getAttribute('data-act'), item = buyerItem;
+  if (what === 'shop') { closeBuyerMore(true); openShopProfile(item.handle); }
+  else if (what === 'report') { closeBuyerMore(true); openReport({ listingId: item.id }, 'Prijavi oglas'); }
+  else if (what === 'copy') {
+    var url = location.origin + '/?o=' + item.id;
+    closeBuyerMore();
+    copyText(url).then(function () { toast('Link oglasa je kopiran.'); }, function () { toast('Link oglasa: ' + url); });
+  }
+});
+
 function shareListing(item) {
   var url = location.origin + '/?o=' + item.id;
   var text = item.title + ' · ' + fmtKM(item.price) + ' · ' + item.shopName;
@@ -611,22 +703,39 @@ function shareListing(item) {
 
 /* ---------- pretraga ---------- */
 
-$('#searchToggle').addEventListener('click', function () {
-  var f = $('#searchForm');
-  f.hidden = !f.hidden;
-  $('#searchToggle').setAttribute('aria-expanded', f.hidden ? 'false' : 'true');
-  if (!f.hidden) { $('#qText').focus(); }
-});
+var searchSheet = $('#searchSheet');
+function searchActive() { return !!(search.q || search.min || search.max); }
+function paintSearchDot() { $('#searchDot').hidden = !(anyMySizes() || searchActive()); }
+function openSearch() {
+  pauseAll();
+  searchSheet.hidden = false;
+  $('#searchToggle').setAttribute('aria-expanded', 'true');
+  // Programski fokus samo uz tastaturu/miša: na dodir bi otvorio tastaturu i pokrio veličine (D-08).
+  if (window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches) { $('#qText').focus(); }
+  else { $('#searchClose').focus({ preventScroll: true }); }
+}
+// Zatvara prozor i vraća fokus na lupu; feed se ponovo posmatra (video se pušta).
+function closeSearch() {
+  searchSheet.hidden = true;
+  $('#searchToggle').setAttribute('aria-expanded', 'false');
+  $('#searchToggle').focus();
+  if (!feed.hidden) { watch(); }
+}
+$('#searchToggle').addEventListener('click', openSearch);
+$('#searchClose').addEventListener('click', closeSearch);
+searchSheet.addEventListener('click', function (e) { if (e.target === searchSheet) { closeSearch(); } });
 $('#searchForm').addEventListener('submit', function (e) {
   e.preventDefault();
   search = { q: $('#qText').value.trim(), min: $('#qMin').value.trim(), max: $('#qMax').value.trim() };
+  paintSearchDot();
+  closeSearch();        // P-1: „Traži” zatvara prozor, rezultat se vidi odmah
   loadFeed(true);
 });
 function clearSearch() {
   search = { q: '', min: '', max: '' };
   $('#qText').value = ''; $('#qMin').value = ''; $('#qMax').value = '';
-  $('#searchForm').hidden = true;
-  $('#searchToggle').setAttribute('aria-expanded', 'false');
+  paintSearchDot();
+  if (!searchSheet.hidden) { closeSearch(); }
   loadFeed(true);
 }
 $('#searchClear').addEventListener('click', clearSearch);
@@ -644,6 +753,7 @@ function openReport(target, title) {
 }
 function closeReport() { reportSheet.hidden = true; reportTarget = null; if (!feed.hidden) { watch(); } }
 $('#reportCancel').addEventListener('click', closeReport);
+$('#reportClose').addEventListener('click', closeReport);
 reportSheet.addEventListener('click', function (e) { if (e.target === reportSheet) { closeReport(); } });
 $('#reportForm').addEventListener('submit', function (e) {
   e.preventDefault();
@@ -661,9 +771,13 @@ $('#reportForm').addEventListener('submit', function (e) {
 function renderChips() {
   var vt = activeSizes().length
     ? '<button type="button" class="vtab" data-vel="clear" aria-label="Poništi filter veličine">Veličine: ' + esc(activeSizes().map(sizeLabel).join(', ')) + ' ✕</button>' : '';
-  chips.innerHTML = vt + ['Sve'].concat(CATS).map(function (c) {
+  // Filter veličine stoji izvan pojasa koji klizi (style.css, .chips-scroll), pa ga kategorije ne prekrivaju.
+  // Pojas se crta iznova, pa se pomak čuva (dodir na „Nakit” ne vraća red na početak).
+  var stari = chips.querySelector('.chips-scroll'), pomak = stari ? stari.scrollLeft : 0;
+  chips.innerHTML = vt + '<div class="chips-scroll">' + ['Sve'].concat(CATS).map(function (c) {
     return '<button type="button" class="chip" data-cat="' + esc(c) + '" aria-pressed="' + (c === filter ? 'true' : 'false') + '">' + esc(c) + '</button>';
-  }).join('');
+  }).join('') + '</div>';
+  if (pomak) { chips.querySelector('.chips-scroll').scrollLeft = pomak; }
 }
 chips.addEventListener('click', function (e) {
   if (e.target.closest('.vtab')) { clearSizes(); return; }
@@ -677,10 +791,10 @@ chips.addEventListener('click', function (e) {
 
 var velTimer = null;
 function paintSizeFilter() {
-  $('#qSizesOdjeca').innerHTML = sizeButtonsHTML(SIZE_ODJECA, mojeVelicine);
-  $('#qSizesObuca').innerHTML = sizeButtonsHTML(SIZE_OBUCA, mojeVelicine);
-  $('#sizesClear').hidden = !mojeVelicine.length;
-  $('#searchDot').hidden = !mojeVelicine.length;
+  $('#qSizesOdjeca').innerHTML = sizeButtonsHTML(SIZE_ODJECA, mojeVelicine.odjeca);
+  $('#qSizesObuca').innerHTML = sizeButtonsHTML(SIZE_OBUCA, mojeVelicine.obuca);
+  $('#sizesClear').hidden = !anyMySizes();
+  paintSearchDot();
 }
 // Ponovno učitavanje feeda poslije izbora veličina; ako je učitavanje u toku, čeka se da završi.
 function reloadFeedSoon(tries) {
@@ -693,17 +807,19 @@ function reloadFeedSoon(tries) {
 function sizesChanged() {
   saveMySizes(); paintSizeFilter(); renderChips(); reloadFeedSoon(0);
 }
-function clearSizes() { mojeVelicine = []; sizesChanged(); }
-function onSizeFilterClick(e) {
-  var b = e.target.closest('.size-btn');
-  if (!b) { return; }
-  var v = b.getAttribute('data-size');
-  if (mojeVelicine.indexOf(v) === -1 && mojeVelicine.length >= SIZE_MAX_FILTER) { toast('Izaberi najviše ' + SIZE_MAX_FILTER + ' veličina.'); return; }
-  toggleSize(mojeVelicine, v);
-  sizesChanged();
+function clearSizes() { mojeVelicine = { odjeca: [], obuca: [] }; sizesChanged(); }
+function onSizeFilterClick(group) {
+  return function (e) {
+    var b = e.target.closest('.size-btn');
+    if (!b) { return; }
+    var v = b.getAttribute('data-size'), arr = mojeVelicine[group];
+    if (arr.indexOf(v) === -1 && mojeVelicine.odjeca.length + mojeVelicine.obuca.length >= SIZE_MAX_FILTER) { toast('Izaberi najviše ' + SIZE_MAX_FILTER + ' veličina.'); return; }
+    toggleSize(arr, v);
+    sizesChanged();
+  };
 }
-$('#qSizesOdjeca').addEventListener('click', onSizeFilterClick);
-$('#qSizesObuca').addEventListener('click', onSizeFilterClick);
+$('#qSizesOdjeca').addEventListener('click', onSizeFilterClick('odjeca'));
+$('#qSizesObuca').addEventListener('click', onSizeFilterClick('obuca'));
 $('#sizesClear').addEventListener('click', clearSizes);
 paintSizeFilter();
 

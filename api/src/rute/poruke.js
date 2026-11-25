@@ -1,9 +1,10 @@
 // Poruke kupac–butik: otvaranje razgovora, spisak razgovora, čitanje i slanje poruka, blokiranje.
 import { q } from '../db.js';
 import {
-  MIN, UNREAD_SQL, VISIBLE_SQL, bad, clean, cleanLine, currentUser, idempotentno, isId, limited, myConversation,
+  MIN, UNREAD_SQL, VISIBLE_SQL, bad, clean, cleanLine, currentUser, idempotentno, isId, limited, myConversation, oldPrice,
 } from '../app.js';
 import { obradiUskoro } from '../outbox.js';
+import { mediaUrls } from '../video.js';
 
 async function blockState(userId, otherId) {
   const res = await q(
@@ -77,15 +78,21 @@ export default function rute(app) {
     const mineCol = conv.customer_id === user.id ? 'customer_read_at' : 'shop_read_at';
     await q(`update conversations set ${mineCol} = now() where id = $1`, [conv.id]);
     const otherId = conv.customer_id === user.id ? conv.shop_id : conv.customer_id;
-    const other = await q('select shop_name, handle, role from users where id = $1', [otherId]);
+    // Prvo otvaranje (after=0) nosi i radno vrijeme sagovornika i sličicu/staru cijenu oglasa; dovlačenje (after>0) ostaje isto malo.
+    const prvo = after === 0;
+    const other = await q('select shop_name, handle, role, hours from users where id = $1', [otherId]);
     const block = await blockState(user.id, otherId);
     let listing = null;
     if (conv.listing_id) {
-      const l = await q(`select l.id, l.title, l.price_cents, l.sizes from listings l where l.id = $2 and l.deleted_at is null and ${VISIBLE_SQL}`, [user.id, conv.listing_id]);
+      const l = await q(`select l.id, l.title, l.price_cents, l.sizes, l.video_path, l.video_provider, l.video_status, l.bunny_guid, l.video_res, l.old_price_cents, l.price_dropped_at from listings l where l.id = $2 and l.deleted_at is null and ${VISIBLE_SQL}`, [user.id, conv.listing_id]);
       if (l.rowCount > 0) listing = { id: l.rows[0].id, title: l.rows[0].title, price: l.rows[0].price_cents / 100, sizes: l.rows[0].sizes || [] };
+      if (listing && prvo) { listing.posterUrl = mediaUrls(l.rows[0]).posterUrl; listing.oldPrice = oldPrice(l.rows[0]); }
     }
     return {
-      sagovornik: { name: other.rows[0].shop_name, handle: other.rows[0].handle, butik: other.rows[0].role === 'butik' },
+      sagovornik: {
+        name: other.rows[0].shop_name, handle: other.rows[0].handle, butik: other.rows[0].role === 'butik',
+        ...(prvo ? { hours: other.rows[0].role === 'butik' ? (other.rows[0].hours ?? null) : null } : {}),
+      },
       oglas: listing,
       blokirao: block.mine,
       blokirano: block.any,

@@ -47,14 +47,14 @@ var postSheet = $('#postSheet'), postForm = $('#postForm'), fVideo = $('#fVideo'
     postErr = $('#postErr'), progress = $('#progress'), progressBar = $('#progressBar'), postSubmit = $('#postSubmit');
 var contactSheet = $('#contactSheet'), toastEl = $('#toast');
 
+// Ikone: ručno pisani SVG sprite na vrhu index.html (docs/DIZAJN.md, 1.6). icon('heart') → <svg class="i"><use href="#i-heart"/></svg>;
+// drugi argument je dodatna klasa (npr. 'i-sm' za 20 px).
+function icon(name, cls) {
+  return '<svg class="i' + (cls ? ' ' + cls : '') + '" aria-hidden="true" focusable="false"><use href="#i-' + name + '"/></svg>';
+}
 var ICON = {
-  heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 7.6a4.5 4.5 0 0 1 7.5 2.9c0 5.4-7.5 10-7.5 10z"/></svg>',
-  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>',
-  soundOn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
-  soundOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4zM16 9.5l5 5m0-5-5 5"/></svg>',
-  flag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V4m0 1h11l-2 4 2 4H6"/></svg>',
-  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19h3l10-10-3-3L5 16v3zM14 7l3 3"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>'
+  heart: icon('heart'), share: icon('share'), soundOn: icon('sound-on'), soundOff: icon('sound-off'),
+  flag: icon('flag'), edit: icon('edit'), trash: icon('trash'), more: icon('more')
 };
 
 /* ---------- pomoćne funkcije ---------- */
@@ -71,13 +71,23 @@ function fmtKM(n) {
   return s + ' KM';
 }
 function tileMedia(i) {
-  if (i.posterUrl) { return '<img class="tile-img" src="' + esc(i.posterUrl) + '" alt="' + esc(i.title) + '" loading="lazy">'; }
-  return '<video src="' + esc(i.videoUrl) + '#t=0.1" muted playsinline preload="metadata" aria-label="' + esc(i.title) + '"></video>';
+  if (i.posterUrl) { return '<img class="tile-img" width="96" height="128" src="' + esc(i.posterUrl) + '" alt="" loading="lazy">'; }
+  return '<video src="' + esc(i.videoUrl) + '#t=0.1" muted playsinline preload="metadata" aria-hidden="true"></video>';
+}
+// Pločica u mreži (profil butika, vlastiti profil): sličica 3:4 s etiketom cijene, ispod naziv u jednom redu.
+// extra = dodatni atributi na dugmetu za otvaranje (npr. data-handle).
+function tileHTML(i, extra) {
+  var flag = i.sold ? '<span class="tile-flag sold">Prodato</span>' : (i.processing ? '<span class="tile-flag">Obrađuje se</span>' : '');
+  return '<li class="tile' + (i.sold ? ' is-sold' : '') + '"><div class="tile-m">' + tileMedia(i) + flag +
+    '<span class="tile-price">' + fmtKM(i.price) + '</span>' +
+    '<button type="button" class="tile-open" data-open="' + i.id + '"' + (extra || '') + ' aria-label="Otvori oglas ' + esc(i.title) + '"></button></div>' +
+    '<span class="tile-name">' + esc(i.title) + (i.oldPrice && !i.sold ? '<span class="drop">Sniženo</span>' : '') + '</span></li>';
 }
 function initial(text) { return String(text || 'B').trim().charAt(0).toUpperCase() || 'B'; }
-// Obavještenje na vrhu ekrana: 3 s, greške (drugi argument true) 5 s; dodir ga zatvara.
+// Obavještenje na vrhu ekrana: 3 s, greške (drugi argument true) 5 s; dodir ga zatvara. Ikona: kvačica ili uzvičnik.
 function toast(msg, isError) {
-  toastEl.textContent = msg; toastEl.hidden = false;
+  toastEl.innerHTML = icon(isError ? 'alert' : 'check') + '<span>' + esc(msg) + '</span>';
+  toastEl.hidden = false;
   toastEl.classList.toggle('toast-err', !!isError);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(function () { toastEl.hidden = true; }, isError ? 5000 : 3000);
